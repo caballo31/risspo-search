@@ -7,7 +7,8 @@ export async function searchProductos(term) {
   try {
     const { data, error } = await supabase
       .from('productos')
-      .select('*, negocios(*)')
+      // Traer explícitamente el rubro (y el id/nombre) del negocio asociado
+      .select('*, negocios(id, rubro, nombre, google_place_id)')
       .ilike('titulo', `%${term}%`);
     
     if (error) throw error;
@@ -23,23 +24,46 @@ export async function searchProductos(term) {
  */
 export async function searchPalabrasClave(term) {
   try {
-    const { data, error } = await supabase
-      .rpc('buscar_keywords', { busqueda: term });
+    const { data, error } = await supabase.rpc('buscar_keywords', { busqueda: term });
 
     if (error) throw error;
-    if (!data || data.length === 0) return [];
 
-    // Extraer todos los rubros asociados y devolver una lista única
-    const rubros = data
-      .map(r => r.rubro_asociado)
-      .filter(Boolean)
-      .map(r => String(r).trim())
-      .filter((v, i, a) => a.indexOf(v) === i);
+    // Extraer todos los rubros asociados desde el RPC (si los devuelve)
+    let rubros = [];
+    if (data && data.length > 0) {
+      rubros = data
+        .map(r => r.rubro_asociado)
+        .filter(Boolean)
+        .map(r => String(r).trim());
+    }
 
-    return rubros;
+    // Fallback adicional: buscar en productos que contengan el término y extraer los rubros de los negocios asociados.
+    // Esto ayuda en casos como "papas" donde varios rubros pueden vender el mismo producto.
+    try {
+      const { data: prodData, error: prodErr } = await supabase
+        .from('productos')
+        .select('negocios(rubro)')
+        .ilike('titulo', `%${term}%`)
+        .limit(50);
+
+      if (!prodErr && prodData && prodData.length > 0) {
+        const rubrosFromProducts = prodData
+          .map(p => p.negocios && p.negocios.rubro)
+          .filter(Boolean)
+          .map(r => String(r).trim());
+
+        rubros = rubros.concat(rubrosFromProducts);
+      }
+    } catch (innerErr) {
+      console.warn('Fallback productos -> rubros falló:', innerErr);
+    }
+
+    // Normalizar y devolver lista única de rubros
+    const uniqueRubros = Array.from(new Set(rubros.map(r => r.toLowerCase()))).map(r => r);
+    return uniqueRubros;
   } catch (error) {
     console.error('Error buscando palabras clave:', error);
-    return null;
+    return [];
   }
 }
 
@@ -85,6 +109,24 @@ export async function searchNegociosByNombre(term) {
   } catch (error) {
     console.error('Error buscando negocios por nombre:', error);
     return null;
+  }
+}
+
+/**
+ * Busca semánticamente mediante el endpoint seguro que crea embeddings
+ */
+export async function searchSemantic(term) {
+  try {
+    const resp = await fetch(`/api/search-semantic?term=${encodeURIComponent(term)}`);
+    if (!resp.ok) {
+      console.error('searchSemantic fetch failed', await resp.text());
+      return [];
+    }
+    const json = await resp.json();
+    return json.results || [];
+  } catch (error) {
+    console.error('Error en searchSemantic:', error);
+    return [];
   }
 }
 
