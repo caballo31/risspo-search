@@ -38,24 +38,24 @@ async function performSearch() {
       return;
     }
 
-    // Nivel 2: Intención / Keyword -> buscar rubro asociado y luego negocios por rubro
+    // NUEVO Nivel 2: Búsqueda directa por rubro (usar término tal cual)
+    const negociosPorRubroDirecto = await searchNegociosByRubro(searchTerm);
+    if (negociosPorRubroDirecto && negociosPorRubroDirecto.length > 0) {
+      renderNegocios(negociosPorRubroDirecto);
+      navigateTo('view-results-business');
+      return;
+    }
+
+    // Nivel 3: Palabras clave (diccionario) -> si sugiere un rubro distinto al término, probar ese rubro
     const rubroAsociado = await searchPalabrasClave(searchTerm);
-    if (rubroAsociado) {
+    if (rubroAsociado && String(rubroAsociado).trim().toLowerCase() !== String(searchTerm).trim().toLowerCase()) {
       const negociosPorRubro = await searchNegociosByRubro(rubroAsociado);
       if (negociosPorRubro && negociosPorRubro.length > 0) {
-        const message = `No encontramos el producto exacto, pero estos locales del rubro ${rubroAsociado} suelen tenerlo`;
+        const message = `No encontramos "${searchTerm}", pero estos locales del rubro ${rubroAsociado} suelen tenerlo`;
         renderNegocios(negociosPorRubro, message);
         navigateTo('view-results-business');
         return;
       }
-    }
-
-    // Nivel 3: Categoría directa (usar el término escrito como rubro)
-    const negociosPorCategoriaDirecta = await searchNegociosByRubro(searchTerm);
-    if (negociosPorCategoriaDirecta && negociosPorCategoriaDirecta.length > 0) {
-      renderNegocios(negociosPorCategoriaDirecta);
-      navigateTo('view-results-business');
-      return;
     }
 
     // Nivel 4: Nombre de negocio
