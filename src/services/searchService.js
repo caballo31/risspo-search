@@ -6,7 +6,7 @@ import { supabase } from '../api/supabase.js';
 export async function searchProductos(term) {
   try {
     const { data, error } = await supabase
-      .from('productos')
+      .rpc('buscar_productos', { busqueda: term })
       .select(`
         *,
         negocios (
@@ -19,7 +19,6 @@ export async function searchProductos(term) {
           logo_url
         )
       `)
-      .ilike('titulo', `%${term}%`)
       .eq('disponible', true);
     
     if (error) throw error;
@@ -36,10 +35,7 @@ export async function searchProductos(term) {
 export async function searchPalabrasClave(term) {
   try {
     const { data, error } = await supabase
-      .from('palabras_clave')
-      .select('rubro_asociado')
-      .ilike('keyword', `%${term}%`)
-      .limit(1);
+      .rpc('buscar_keywords', { busqueda: term });
     
     if (error) throw error;
     return data && data.length > 0 ? data[0].rubro_asociado : null;
@@ -73,9 +69,7 @@ export async function searchNegociosByRubro(rubro) {
 export async function searchNegociosByNombre(term) {
   try {
     const { data, error } = await supabase
-      .from('negocios')
-      .select('*')
-      .ilike('nombre', `%${term}%`);
+      .rpc('buscar_negocios_nombre', { busqueda: term });
     
     if (error) throw error;
     return data;
