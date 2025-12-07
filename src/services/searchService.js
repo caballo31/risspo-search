@@ -25,9 +25,18 @@ export async function searchPalabrasClave(term) {
   try {
     const { data, error } = await supabase
       .rpc('buscar_keywords', { busqueda: term });
-    
+
     if (error) throw error;
-    return data && data.length > 0 ? data[0].rubro_asociado : null;
+    if (!data || data.length === 0) return [];
+
+    // Extraer todos los rubros asociados y devolver una lista única
+    const rubros = data
+      .map(r => r.rubro_asociado)
+      .filter(Boolean)
+      .map(r => String(r).trim())
+      .filter((v, i, a) => a.indexOf(v) === i);
+
+    return rubros;
   } catch (error) {
     console.error('Error buscando palabras clave:', error);
     return null;
@@ -39,13 +48,22 @@ export async function searchPalabrasClave(term) {
  */
 export async function searchNegociosByRubro(rubro) {
   try {
-    const { data, error } = await supabase
-      .from('negocios')
-      .select('*') 
-      .ilike('rubro', `%${rubro}%`);
-    
+    // Acepta un string (búsqueda fuzzy) o un array de rubros (match exacto usando IN)
+    let query = supabase.from('negocios').select('*');
+
+    if (Array.isArray(rubro) && rubro.length > 0) {
+      // Usar IN para múltiples rubros (coincidencia exacta por string)
+      query = query.in('rubro', rubro);
+    } else if (typeof rubro === 'string' && rubro.trim() !== '') {
+      // Búsqueda fuzzy para coincidencia parcial
+      query = query.ilike('rubro', `%${rubro}%`);
+    } else {
+      return [];
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
-    return data;
+    return data || [];
   } catch (error) {
     console.error('Error buscando negocios por rubro:', error);
     return null;

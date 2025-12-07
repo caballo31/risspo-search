@@ -38,24 +38,49 @@ async function performSearch() {
       return;
     }
 
-    // NUEVO Nivel 2: Búsqueda directa por rubro (usar término tal cual)
+    // NUEVO: Buscar negocios por rubro directo (prioridad máxima para rubros explícitos)
     const negociosPorRubroDirecto = await searchNegociosByRubro(searchTerm);
-    if (negociosPorRubroDirecto && negociosPorRubroDirecto.length > 0) {
-      renderNegocios(negociosPorRubroDirecto);
-      navigateTo('view-results-business');
-      return;
+
+    // Nivel siguiente: buscar todos los rubros asociados a la keyword (puede devolver múltiples)
+    const rubrosAsociados = await searchPalabrasClave(searchTerm);
+
+    let negociosFromKeywords = [];
+    if (Array.isArray(rubrosAsociados) && rubrosAsociados.length > 0) {
+      // Si el RPC devolvió rubros, buscar negocios que pertenezcan a cualquiera de esos rubros
+      negociosFromKeywords = await searchNegociosByRubro(rubrosAsociados);
     }
 
-    // Nivel 3: Palabras clave (diccionario) -> si sugiere un rubro distinto al término, probar ese rubro
-    const rubroAsociado = await searchPalabrasClave(searchTerm);
-    if (rubroAsociado && String(rubroAsociado).trim().toLowerCase() !== String(searchTerm).trim().toLowerCase()) {
-      const negociosPorRubro = await searchNegociosByRubro(rubroAsociado);
-      if (negociosPorRubro && negociosPorRubro.length > 0) {
-        const message = `No encontramos "${searchTerm}", pero estos locales del rubro ${rubroAsociado} suelen tenerlo`;
-        renderNegocios(negociosPorRubro, message);
-        navigateTo('view-results-business');
-        return;
+    // Unificar resultados: priorizar los negocios por rubro directo, luego los de keywords
+    const combined = [];
+    const seen = new Set();
+
+    function pushUnique(negociosArray) {
+      if (!Array.isArray(negociosArray)) return;
+      negociosArray.forEach(n => {
+        const key = n.id ?? n.google_place_id ?? JSON.stringify(n);
+        if (!seen.has(key)) {
+          seen.add(key);
+          combined.push(n);
+        }
+      });
+    }
+
+    // Directo primero (si existe)
+    pushUnique(negociosPorRubroDirecto);
+    // Luego los traídos por palabras clave (pueden superponer)
+    pushUnique(negociosFromKeywords);
+
+    if (combined.length > 0) {
+      // Si hubo coincidencia directa (primeros) y/o por keywords, renderizar combinado
+      let message = '';
+      if ((negociosPorRubroDirecto && negociosPorRubroDirecto.length > 0) && (negociosFromKeywords && negociosFromKeywords.length > 0)) {
+        message = `Se encontraron locales por rubro y por palabras clave relacionadas.`;
+      } else if (negociosFromKeywords && negociosFromKeywords.length > 0) {
+        message = `Resultados encontrados en rubros relacionados.`;
       }
+      renderNegocios(combined, message);
+      navigateTo('view-results-business');
+      return;
     }
 
     // Nivel 4: Nombre de negocio
