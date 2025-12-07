@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>RISSPO - Prototipo Integrado</title>
+  
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+</head>
+
+<body class="bg-gray-100 md:bg-[var(--light-grey-bg)] font-display text-gray-900 h-screen overflow-hidden flex justify-center">
+
+  <div id="app-container" class="w-full h-full md:h-[95vh] md:max-w-6xl md:my-auto md:rounded-3xl md:border md:border-gray-200 md:shadow-2xl flex flex-col overflow-hidden bg-[var(--light-grey-bg)] relative transition-all duration-300">
+
+    <div id="view-home" class="view-section active flex-col h-full overflow-y-auto">
+      <header class="px-6 pt-4 flex justify-between items-center text-sm text-gray-800 md:hidden">
+        <div>10:24</div>
+        <div class="flex items-center space-x-1">
+          <span class="material-symbols-outlined !text-base">signal_cellular_alt</span>
+          <span class="material-symbols-outlined !text-base">wifi</span>
+          <span class="material-symbols-outlined !text-base -rotate-90">battery_full</span>
+        </div>
+      </header>
+      
+      <header class="hidden md:flex px-8 py-6 justify-between items-center">
+         <span class="text-xl font-bold tracking-widest text-gray-400">RISSPO</span>
+         <div class="flex gap-4">
+             <button class="text-sm font-bold text-gray-500 hover:text-orange-highlight">Ingresar</button>
+             <button class="text-sm font-bold text-gray-500 hover:text-orange-highlight">Negocios</button>
+         </div>
+      </header>
+
+      <main class="flex-grow flex flex-col justify-center px-6 pt-8 pb-4 md:items-center">
+        <div class="w-full md:max-w-2xl">
+            <div class="text-center md:hidden">
+            <p class="text-xs font-semibold tracking-widest text-gray-400 mb-4">RISSPO CHAJARÍ</p>
+            </div>
+            
+            <div class="flex flex-col justify-center text-center mb-12">
+            <h1 class="text-5xl md:text-7xl font-bold text-gray-900 leading-tight">Encontrá <br/><span class="text-orange-highlight">lo que sea</span></h1>
+            <p class="text-base md:text-xl text-gray-500 max-w-xs md:max-w-lg mx-auto mt-6">Preguntá, explorá y pedí por WhatsApp en segundos.</p>
+            </div>
+
+            <div class="pb-4">
+            <div class="flex flex-wrap justify-center items-center gap-3 mb-8">
+                <button onclick="searchByCategory('Comida')" class="flex items-center space-x-2 px-6 py-3 bg-white text-gray-700 rounded-full shadow-sm text-sm md:text-base border border-gray-200/80 hover:shadow-md hover:border-orange-200 transition-all transform hover:-translate-y-0.5">
+                <span class="material-symbols-outlined !text-lg text-orange-400">restaurant</span>
+                <span>Comida</span>
+                </button>
+                <button onclick="searchByCategory('Farmacia')" class="flex items-center space-x-2 px-6 py-3 bg-white text-gray-700 rounded-full shadow-sm text-sm md:text-base border border-gray-200/80 hover:shadow-md hover:border-orange-200 transition-all transform hover:-translate-y-0.5">
+                <span class="material-symbols-outlined !text-lg text-red-400">local_pharmacy</span>
+                <span>Farmacia</span>
+                </button>
+                <button onclick="searchByCategory('Flete')" class="flex items-center space-x-2 px-6 py-3 bg-white text-gray-700 rounded-full shadow-sm text-sm md:text-base border border-gray-200/80 hover:shadow-md hover:border-orange-200 transition-all transform hover:-translate-y-0.5">
+                <span class="material-symbols-outlined !text-lg text-blue-400">local_shipping</span>
+                <span>Flete</span>
+                </button>
+            </div>
+
+            <div class="relative max-w-xl mx-auto">
+                <div class="flex items-center bg-white rounded-2xl p-2 shadow-lg border border-gray-200/80 group focus-within:ring-2 focus-within:ring-orange-100 transition-all">
+                <span class="material-symbols-outlined pl-3 text-gray-400 group-focus-within:text-orange-highlight">search</span>
+                <input id="search-input-home" class="w-full bg-transparent border-none text-gray-800 placeholder-gray-500 focus:ring-0 text-lg py-3" placeholder="¿Qué buscás hoy?" type="text" onkeypress="handleSearchKeyPress(event)"/>
+                <button onclick="performSearch()" class="bg-white rounded-xl p-3 ml-2 shadow-sm border border-gray-200/80 hover:bg-orange-highlight hover:text-white hover:border-orange-highlight transition-all active:scale-95">
+                    <span class="material-symbols-outlined">arrow_forward</span>
+                </button>
+                </div>
+            </div>
+            </div>
+        </div>
+      </main>
+    </div>
+
+    <div id="view-results-product" class="view-section flex-col h-full overflow-y-auto hidden">
+      <header class="px-6 pt-4 flex justify-between items-center text-sm text-gray-800 sticky top-0 bg-[var(--light-grey-bg)] z-10 pb-4 md:hidden">
+        <div>10:24</div>
+        <div class="flex items-center space-x-1">
+          <span class="material-symbols-outlined !text-base">signal_cellular_alt</span>
+          <span class="material-symbols-outlined !text-base">wifi</span>
+          <span class="material-symbols-outlined !text-base -rotate-90">battery_full</span>
+        </div>
+      </header>
+
+      <main class="flex-grow flex flex-col px-6 pb-8 pt-4 md:px-12 md:pt-8">
+        <div class="relative mb-8 sticky top-0 md:top-4 z-20">
+          <div class="flex items-center bg-white rounded-full p-2 shadow-xl border border-gray-200/60 max-w-2xl mx-auto">
+            <span class="material-symbols-outlined pl-3 text-gray-500">search</span>
+            <input id="search-input-product" class="w-full bg-transparent border-none text-gray-900 placeholder-gray-500 focus:ring-0" type="text" placeholder="¿Qué buscás?" onkeypress="handleSearchKeyPress(event)"/>
+            <button onclick="navigateTo('view-home')" class="bg-gray-100 rounded-full p-2 ml-2 hover:bg-gray-200 transition-colors">
+              <span class="material-symbols-outlined text-gray-600 !text-lg">close</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="search-message-product" class="mb-4 text-center text-gray-500 text-sm hidden"></div>
+
+        <div id="products-container" class="mb-8">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Los productos se renderizarán aquí dinámicamente -->
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div id="view-results-business" class="view-section flex-col h-full overflow-y-auto hidden">
+      <header class="px-6 pt-4 flex justify-between items-center text-sm text-gray-800 sticky top-0 bg-[var(--light-grey-bg)] z-10 pb-4 md:hidden">
+        <div>10:24</div>
+        <div class="flex items-center space-x-1">
+          <span class="material-symbols-outlined !text-base">signal_cellular_alt</span>
+          <span class="material-symbols-outlined !text-base">wifi</span>
+          <span class="material-symbols-outlined !text-base -rotate-90">battery_full</span>
+        </div>
+      </header>
+
+      <main class="flex-grow flex flex-col px-6 pb-8 pt-4 md:px-12 md:pt-8">
+        <div class="relative mb-8 sticky top-0 md:top-4 z-20">
+          <div class="flex items-center bg-white rounded-full p-2 shadow-xl border border-gray-200/60 max-w-2xl mx-auto">
+            <span class="material-symbols-outlined pl-3 text-gray-500">search</span>
+            <input id="search-input-business" class="w-full bg-transparent border-none text-gray-900 placeholder-gray-500 focus:ring-0" type="text" placeholder="¿Qué buscás?" onkeypress="handleSearchKeyPress(event)"/>
+            <button onclick="navigateTo('view-home')" class="bg-gray-100 rounded-full p-2 ml-2 hover:bg-gray-200 transition-colors">
+              <span class="material-symbols-outlined text-gray-600 !text-lg">close</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="search-message-business" class="mb-4 text-center text-gray-500 text-sm hidden"></div>
+
+        <div class="space-y-4 md:space-y-8">
+          <h2 class="text-lg font-semibold text-gray-500 uppercase tracking-wider text-center md:text-left">Negocios Recomendados</h2>
+          
+          <div id="businesses-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Los negocios se renderizarán aquí dinámicamente -->
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div id="view-profile" class="view-section flex-col h-full overflow-y-auto hidden bg-[var(--light-grey-bg)]">
+      <nav class="md:hidden px-6 py-4 flex justify-between items-center bg-[var(--light-grey-bg)] sticky top-0 z-30 border-b border-gray-200/50 backdrop-blur-sm">
+        <button onclick="goBack()" class="flex items-center justify-center bg-white w-10 h-10 rounded-full border border-gray-200/60 shadow-sm hover:bg-gray-50 active:scale-95 transition-all">
+          <span class="material-symbols-outlined text-gray-800">arrow_back_ios_new</span>
+        </button>
+        <div class="flex items-center gap-1">
+            <h1 class="font-bold text-gray-900 truncate">Ferretería Gemar</h1>
+            <span class="material-symbols-outlined !text-lg text-trustworthy-blue" style="font-variation-settings: 'FILL' 1, 'wght' 700;">verified</span>
+        </div>
+        <button class="flex items-center justify-center bg-white w-10 h-10 rounded-full border border-gray-200/60 shadow-sm hover:bg-gray-50">
+          <span class="material-symbols-outlined text-gray-800">ios_share</span>
+        </button>
+      </nav>
+
+      <div class="hidden md:block bg-white border-b border-gray-200 sticky top-0 z-40">
+          <div class="max-w-7xl mx-auto px-8 h-16 flex items-center">
+            <button onclick="goBack()" class="flex items-center gap-2 text-gray-500 hover:text-orange-highlight transition-colors text-sm font-medium">
+                <span class="material-symbols-outlined text-base">arrow_back</span>
+                Volver a Resultados
+            </button>
+          </div>
+      </div>
+
+      <main class="flex-grow pb-24 md:pb-12 pt-6 md:pt-10">
+        
+        <div class="max-w-7xl mx-auto px-4 md:px-8 relative z-10">
+            <div class="flex flex-col md:flex-row gap-8 lg:gap-12">
+
+                <aside class="md:w-1/3 lg:w-1/4 flex-shrink-0">
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-6 md:sticky md:top-24">
+                        
+                        <div class="flex flex-col items-center md:items-start text-center md:text-left mb-6">
+                            <div class="w-24 h-24 bg-white border border-gray-100 rounded-2xl shadow-sm mb-4 overflow-hidden relative">
+                                <img src="https://images.unsplash.com/photo-1581147036324-c17ac41d1685?auto=format&fit=crop&q=80&w=200" class="w-full h-full object-cover">
+                            </div>
+                            
+                            <div class="w-full">
+                                <div class="flex items-center justify-center md:justify-start gap-1">
+                                    <h1 class="font-bold text-2xl text-gray-900 leading-tight">Ferretería Gemar</h1>
+                                    <span class="material-symbols-outlined !text-xl text-trustworthy-blue" style="font-variation-settings: 'FILL' 1, 'wght' 700, 'opsz' 20;">verified</span>
+                                </div>
+                                <p class="text-sm text-gray-500 mt-1">Herramientas y Construcción</p>
+                            </div>
+                        </div>
+
+                        <div class="w-full h-px bg-gray-100 mb-5"></div>
+
+                        <div class="space-y-5">
+                            <div class="flex items-start gap-3 group cursor-pointer">
+                                <div class="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center flex-shrink-0 group-hover:bg-orange-50 transition-colors">
+                                    <span class="material-symbols-outlined text-gray-500 text-lg group-hover:text-orange-highlight">location_on</span>
+                                </div>
+                                <div>
+                                    <a href="#" class="text-sm text-gray-900 font-medium hover:text-orange-highlight underline decoration-dotted underline-offset-2">Av. San Martín 1234</a>
+                                    <p class="text-xs text-gray-500 mt-0.5">A 2.5 km de tu ubicación</p>
+                                </div>
+                            </div>
+
+                            <div class="flex items-start gap-3">
+                                <div class="w-8 h-8 rounded-full bg-green-50 flex items-center justify-center flex-shrink-0">
+                                    <span class="material-symbols-outlined text-green-600 text-lg">schedule</span>
+                                </div>
+                                <div>
+                                    <p class="text-sm text-green-700 font-bold">Abierto ahora</p>
+                                    <p class="text-xs text-gray-500 mt-0.5">Cierra a las 18:00</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="w-full h-px bg-gray-100 my-6"></div>
+
+                        <div class="space-y-3 hidden md:block">
+                            <button class="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-xl hover:bg-green-600 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-green-100 hover:shadow-md hover:shadow-green-200">
+                                <span class="material-symbols-outlined">chat</span> WhatsApp
+                            </button>
+                            <button class="w-full bg-white text-gray-800 border border-gray-300 font-bold py-3 px-4 rounded-xl hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
+                                <span class="material-symbols-outlined">call</span> Llamar
+                            </button>
+                        </div>
+
+                    </div>
+                </aside>
+
+                <div class="md:w-2/3 lg:w-3/4">
+                    
+                    <div class="mb-10">
+                        <div class="relative max-w-3xl">
+                            <div class="relative group">
+                                <span class="material-symbols-outlined absolute left-4 top-3.5 text-gray-400 group-focus-within:text-orange-highlight transition-colors">search</span>
+                                <input class="w-full bg-white border border-gray-200 text-gray-800 placeholder-gray-400 rounded-2xl py-3.5 pl-12 shadow-sm focus:ring-2 focus:ring-orange-100 focus:border-orange-300 transition-all text-base" placeholder="¿Qué estás buscando en este local?" type="text"/>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4 flex flex-wrap gap-2">
+                            <button class="px-4 py-1.5 bg-gray-800 text-white rounded-full shadow-sm text-sm border border-gray-800 font-medium hover:bg-gray-700 transition-all">
+                                Todos
+                            </button>
+                            <button class="px-4 py-1.5 bg-white text-gray-600 rounded-full shadow-sm text-sm border border-gray-200/80 hover:border-orange-200 hover:text-orange-600 hover:bg-orange-50 transition-all">
+                                Herramientas
+                            </button>
+                            <button class="px-4 py-1.5 bg-white text-gray-600 rounded-full shadow-sm text-sm border border-gray-200/80 hover:border-orange-200 hover:text-orange-600 hover:bg-orange-50 transition-all">
+                                Electricidad
+                            </button>
+                            <button class="px-4 py-1.5 bg-white text-gray-600 rounded-full shadow-sm text-sm border border-gray-200/80 hover:border-orange-200 hover:text-orange-600 hover:bg-orange-50 transition-all">
+                                Plomería
+                            </button>
+                            <button class="px-4 py-1.5 bg-white text-gray-600 rounded-full shadow-sm text-sm border border-gray-200/80 hover:border-orange-200 hover:text-orange-600 hover:bg-orange-50 transition-all">
+                                Pinturas
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-12">
+                        <div class="flex items-center justify-between mb-5 px-1">
+                            <h3 class="font-bold text-gray-900 text-xl flex items-center gap-2">
+                                En Vidriera
+                            </h3>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            
+                            <div class="bg-white rounded-2xl border border-gray-200/60 p-5 shadow-sm hover:shadow-md hover:border-orange-100 transition-all flex flex-col h-full group">
+                                <div class="flex items-start gap-5 mb-4">
+                                    <div class="w-24 h-24 bg-gray-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform duration-300 p-2">
+                                        <img alt="Taladro" class="h-full w-full object-contain mix-blend-multiply" src="https://images.unsplash.com/photo-1504148455328-c376907d081c?auto=format&fit=crop&q=80&w=300"/>
+                                    </div>
+                                    <div class="flex-1 min-w-0 pt-1">
+                                        <h4 class="font-bold text-gray-900 leading-snug text-lg line-clamp-2 group-hover:text-orange-highlight transition-colors">Taladro Percutor Gamma 13mm Profesional</h4>
+                                        <div class="flex items-center gap-2 mt-3">
+                                            <span class="text-2xl font-bold text-gray-900">$12.999</span>
+                                            <span class="text-[10px] uppercase tracking-wider text-white font-bold bg-red-500 px-2 py-1 rounded">Oferta</span>
+                                        </div>
+                                        <p class="text-sm text-gray-400 line-through mt-0.5 font-medium">$15.500</p>
+                                    </div>
+                                </div>
+                                <button class="mt-auto w-full bg-orange-highlight text-white font-bold py-3.5 rounded-xl text-sm hover:bg-orange-600 hover:shadow-lg hover:shadow-orange-200 transition-all flex items-center justify-center gap-2 shadow-sm">
+                                    <svg aria-hidden="true" class="h-5 w-5 path-fill" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M16.75 13.96c.25.13.41.36.44.62l.27 2.11c.06.5-.14 1-.53 1.28-.18.13-.38.19-.58.19-.24 0-.48-.08-.69-.23l-1.34-.9a.48.48 0 00-.58 0l-1.34.9c-.43.29-1 .24-1.36-.12a1.43 1.43 0 01-.53-1.28l.27-2.11c.03-.26.2-.5.44-.62l1.8-1a.48.48 0 00.25-.66l-.5-1.63a.48.48 0 00-.56-.3l-2.03.73c-.49.18-.99-.08-1.2-.55s-.08-.99.31-1.3l1.8-1.33c.25-.19.58-.23.88-.1l2.03.73c.5.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.33a.9.9 0 01-.39-1.26c.15-.3.44-.5.78-.5.1 0 .2.02.3.05l2.03.73c.49.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.33a.9.9 0 01-.39-1.26c.15-.3.44-.5.78-.5.1 0 .2.02.3.05l2.03.73c.49.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.33a.9.9 0 01-.39-1.26c.15-.3.44-.5.78-.5.1 0 .2.02.3.05l2.03.73c.49.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.33a.9.9 0 01-.39-1.26c.15-.3.44-.5.78-.5.1 0 .2.02.3.05l2.03.73c.49.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.32z"></path>
+                                    </svg>
+                                    Pedir Producto
+                                </button>
+                            </div>
+
+                            <div class="bg-white rounded-2xl border border-gray-200/60 p-5 shadow-sm hover:shadow-md hover:border-orange-100 transition-all flex flex-col h-full group">
+                                <div class="flex items-start gap-5 mb-4">
+                                    <div class="w-24 h-24 bg-gray-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform duration-300">
+                                        <span class="material-symbols-outlined text-gray-400 text-4xl group-hover:text-orange-highlight transition-colors">handyman</span>
+                                    </div>
+                                    <div class="flex-1 min-w-0 pt-1">
+                                        <h4 class="font-bold text-gray-900 leading-tight text-lg line-clamp-2 group-hover:text-orange-highlight transition-colors">Set Destornilladores 6pzas Mango Goma</h4>
+                                        <div class="flex items-baseline gap-2 mt-3">
+                                            <span class="text-2xl font-bold text-gray-900">$4.500</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button class="mt-auto w-full bg-orange-highlight text-white font-bold py-3.5 rounded-xl text-sm hover:bg-orange-600 hover:shadow-lg hover:shadow-orange-200 transition-all flex items-center justify-center gap-2 shadow-sm">
+                                    <svg aria-hidden="true" class="h-5 w-5 path-fill" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M16.75 13.96c.25.13.41.36.44.62l.27 2.11c.06.5-.14 1-.53 1.28-.18.13-.38.19-.58.19-.24 0-.48-.08-.69-.23l-1.34-.9a.48.48 0 00-.58 0l-1.34.9c-.43.29-1 .24-1.36-.12a1.43 1.43 0 01-.53-1.28l.27-2.11c.03-.26.2-.5.44-.62l1.8-1a.48.48 0 00.25-.66l-.5-1.63a.48.48 0 00-.56-.3l-2.03.73c-.49.18-.99-.08-1.2-.55s-.08-.99.31-1.3l1.8-1.33c.25-.19.58-.23.88-.1l2.03.73c.5.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.33a.9.9 0 01-.39-1.26c.15-.3.44-.5.78-.5.1 0 .2.02.3.05l2.03.73c.49.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.33a.9.9 0 01-.39-1.26c.15-.3.44-.5.78-.5.1 0 .2.02.3.05l2.03.73c.49.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.33a.9.9 0 01-.39-1.26c.15-.3.44-.5.78-.5.1 0 .2.02.3.05l2.03.73c.49.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.33a.9.9 0 01-.39-1.26c.15-.3.44-.5.78-.5.1 0 .2.02.3.05l2.03.73c.49.18.99-.08 1.2-.55s.08-.99-.31-1.3l-1.8-1.32z"></path>
+                                    </svg>
+                                    Pedir Producto
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3 class="font-bold text-gray-400 uppercase tracking-wide text-xs mb-4 pl-1 border-l-4 border-gray-300 ml-1 pl-3">Podrían tenerlo...</h3>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                             <div class="bg-white rounded-2xl border border-gray-200/60 p-5 shadow-sm flex items-center gap-5 hover:border-gray-300 transition-colors group">
+                                 <div class="w-16 h-16 bg-gray-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-gray-100 transition-colors">
+                                     <span class="material-symbols-outlined text-3xl text-gray-400 group-hover:text-gray-600 transition-colors">hammer</span>
+                                 </div>
+                                 <div class="flex-1 min-w-0">
+                                     <h4 class="font-bold text-gray-900 text-base truncate">Martillo Galponero</h4>
+                                     <p class="text-xs text-gray-500 mt-1">Sin confirmar</p>
+                                 </div>
+                                 <button class="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-bold rounded-xl shadow-sm hover:bg-gray-50 text-sm">
+                                     Consultar
+                                 </button>
+                             </div>
+
+                             <div class="bg-white rounded-2xl border border-gray-200/60 p-5 shadow-sm flex items-center gap-5 hover:border-gray-300 transition-colors group">
+                                 <div class="w-16 h-16 bg-gray-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-gray-100 transition-colors">
+                                     <span class="material-symbols-outlined text-3xl text-gray-400 group-hover:text-gray-600 transition-colors">format_paint</span>
+                                 </div>
+                                 <div class="flex-1 min-w-0">
+                                     <h4 class="font-bold text-gray-900 text-base truncate">Lata Pintura 20L</h4>
+                                     <p class="text-xs text-gray-500 mt-1">Sin confirmar</p>
+                                 </div>
+                                 <button class="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-bold rounded-xl shadow-sm hover:bg-gray-50 text-sm">
+                                     Consultar
+                                 </button>
+                             </div>
+                        </div>
+                    </div>
+
+                </div> 
+
+            </div>
+        </div>
+      </main>
+
+      <footer class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 md:hidden z-30 shadow-[0_-5px_15px_rgba(0,0,0,0.05)]">
+          <div class="flex gap-3 w-full">
+            <button class="flex-1 bg-white text-gray-800 border border-gray-300 font-bold py-3 px-4 rounded-xl text-center hover:bg-gray-50 transition-colors">
+                Llamar
+            </button>
+            <button class="flex-1 bg-green-500 text-white font-bold py-3 px-4 rounded-xl text-center hover:bg-green-600 transition-colors shadow-sm">
+                WhatsApp
+            </button>
+          </div>
+      </footer>
+    </div>
+
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
