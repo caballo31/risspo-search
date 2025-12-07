@@ -52,19 +52,27 @@ export function showNoResults(term) {
  * Obtiene el término de búsqueda del input activo
  */
 export function getSearchTerm() {
-  const homeInput = document.getElementById('search-input-home');
-  const productInput = document.getElementById('search-input-product');
-  const businessInput = document.getElementById('search-input-business');
-  
-  if (homeInput && homeInput.value.trim()) {
-    return homeInput.value.trim();
+  const activeView = document.querySelector('.view-section.active');
+  if (!activeView) {
+    return '';
   }
-  if (productInput && productInput.value.trim()) {
-    return productInput.value.trim();
+
+  const viewId = activeView.id;
+  let inputId = '';
+
+  if (viewId === 'view-home') {
+    inputId = 'search-input-home';
+  } else if (viewId === 'view-results-product') {
+    inputId = 'search-input-product';
+  } else if (viewId === 'view-results-business') {
+    inputId = 'search-input-business';
   }
-  if (businessInput && businessInput.value.trim()) {
-    return businessInput.value.trim();
+
+  if (inputId) {
+    const input = document.getElementById(inputId);
+    return input ? input.value.trim() : '';
   }
+
   return '';
 }
 
