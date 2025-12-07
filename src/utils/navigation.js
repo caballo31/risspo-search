@@ -1,27 +1,24 @@
-let lastListView = 'view-results-product'; 
+let lastListView = 'view-results-product';
 
 /**
  * Navega a una vista específica
  */
 export function navigateTo(viewId) {
-  if(viewId === 'view-profile') {
-    const currentView = document.querySelector('.view-section.active');
+  if (viewId === 'view-profile') {
+    const currentView = document.querySelector('.view-section:not(.hidden)');
     if (currentView && currentView.id.includes('results')) {
-        lastListView = currentView.id;
+      lastListView = currentView.id;
     }
   }
 
   document.querySelectorAll('.view-section').forEach(el => {
-    el.classList.remove('active');
-    setTimeout(() => el.classList.add('hidden'), 200);
+    if (el.id !== viewId) {
+      el.classList.add('hidden');
+    } else {
+      el.classList.remove('hidden');
+      el.scrollTop = 0;
+    }
   });
-
-  const target = document.getElementById(viewId);
-  if (target) {
-    target.classList.remove('hidden');
-    setTimeout(() => target.classList.add('active'), 10);
-    target.scrollTop = 0;
-  }
 }
 
 /**
@@ -30,4 +27,3 @@ export function navigateTo(viewId) {
 export function goBack() {
   navigateTo(lastListView);
 }
-
