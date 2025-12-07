@@ -30,39 +30,43 @@ async function performSearch() {
   showLoadingState();
 
   try {
-    // PASO A: Buscar productos directamente
+    // Nivel 1: Productos
     const productos = await searchProductos(searchTerm);
-    
     if (productos && productos.length > 0) {
       renderProductos(productos);
       navigateTo('view-results-product');
       return;
     }
 
-    // PASO B: Buscar en palabras_clave y luego negocios por rubro
-    const rubro = await searchPalabrasClave(searchTerm);
-    
-    if (rubro) {
-      const negocios = await searchNegociosByRubro(rubro);
-      
-      if (negocios && negocios.length > 0) {
-        const message = `No encontramos el producto exacto, pero estos locales del rubro ${rubro} suelen tenerlo`;
-        renderNegocios(negocios, message);
+    // Nivel 2: Intención / Keyword -> buscar rubro asociado y luego negocios por rubro
+    const rubroAsociado = await searchPalabrasClave(searchTerm);
+    if (rubroAsociado) {
+      const negociosPorRubro = await searchNegociosByRubro(rubroAsociado);
+      if (negociosPorRubro && negociosPorRubro.length > 0) {
+        const message = `No encontramos el producto exacto, pero estos locales del rubro ${rubroAsociado} suelen tenerlo`;
+        renderNegocios(negociosPorRubro, message);
         navigateTo('view-results-business');
         return;
       }
     }
 
-    // PASO C: Buscar negocios por nombre
-    const negocios = await searchNegociosByNombre(searchTerm);
-    
-    if (negocios && negocios.length > 0) {
-      renderNegocios(negocios);
+    // Nivel 3: Categoría directa (usar el término escrito como rubro)
+    const negociosPorCategoriaDirecta = await searchNegociosByRubro(searchTerm);
+    if (negociosPorCategoriaDirecta && negociosPorCategoriaDirecta.length > 0) {
+      renderNegocios(negociosPorCategoriaDirecta);
       navigateTo('view-results-business');
       return;
     }
 
-    // No se encontraron resultados
+    // Nivel 4: Nombre de negocio
+    const negociosPorNombre = await searchNegociosByNombre(searchTerm);
+    if (negociosPorNombre && negociosPorNombre.length > 0) {
+      renderNegocios(negociosPorNombre);
+      navigateTo('view-results-business');
+      return;
+    }
+
+    // Fallback: sin resultados
     showNoResults(searchTerm);
     navigateTo('view-results-product');
 

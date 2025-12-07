@@ -52,10 +52,9 @@ export function showNoResults(term) {
  * Obtiene el término de búsqueda del input activo
  */
 export function getSearchTerm() {
-  const activeView = document.querySelector('.view-section.active');
-  if (!activeView) {
-    return '';
-  }
+  // Detectar la vista activa buscando la que NO tenga la clase .hidden
+  const activeView = document.querySelector('.view-section:not(.hidden)');
+  if (!activeView) return '';
 
   const viewId = activeView.id;
   let inputId = '';

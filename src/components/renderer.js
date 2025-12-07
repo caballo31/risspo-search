@@ -185,7 +185,6 @@ export function renderNegocios(negocios, message = null) {
       </div>
       <div class="flex-grow">
         <h3 class="font-bold text-xl text-gray-900 leading-tight">${negocio.nombre || 'Sin nombre'}</h3>
-        <p class="text-sm text-gray-500 mt-1">${negocio.rubro || ''}</p>
         
         ${direccionHtml}
         ${horarioHtml}
