@@ -8,10 +8,12 @@ export function clearResults() {
   const messageBusiness = document.getElementById('search-message-business');
   
   if (productsContainer) {
-    const grid = productsContainer.querySelector('.grid');
-    if (grid) grid.innerHTML = '';
+    // Solo limpiar el contenido interior del contenedor, no eliminar el elemento padre
+    productsContainer.innerHTML = '';
   }
-  if (businessesContainer) businessesContainer.innerHTML = '';
+  if (businessesContainer) {
+    businessesContainer.innerHTML = '';
+  }
   if (messageProduct) {
     messageProduct.classList.add('hidden');
     messageProduct.textContent = '';
@@ -26,7 +28,16 @@ export function clearResults() {
  * Muestra un estado de carga (placeholder para futuro spinner)
  */
 export function showLoadingState() {
-  // Podrías agregar un spinner aquí si lo deseas
+  // Renderizar el skeleton loader inmediatamente.
+  // renderSkeletonLoader es lo suficientemente robusta para crear la grilla
+  // si no existe, por lo que aquí podemos llamarla directamente.
+  try {
+    renderSkeletonLoader();
+  } catch (err) {
+    // No bloquear si algo falla; el caller puede manejar fallbacks.
+    // eslint-disable-next-line no-console
+    console.warn('showLoadingState: error mostrando skeleton', err);
+  }
 }
 
 /**
@@ -131,9 +142,13 @@ export function renderSkeletonLoader() {
   const cardsHtml = Array.from({ length: 6 }).map(() => skeletonCard()).join('');
 
   if (existingGrid) {
+    // Asegurar que la grilla tenga la clase de filas automáticas para evitar saltos de layout
+    if (!existingGrid.classList.contains('auto-rows-fr')) {
+      existingGrid.classList.add('auto-rows-fr');
+    }
     existingGrid.innerHTML = cardsHtml;
   } else {
-    productsContainer.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">${cardsHtml}</div>`;
+    productsContainer.innerHTML = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr">${cardsHtml}</div>`;
   }
 }
 
