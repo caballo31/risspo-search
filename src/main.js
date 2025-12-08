@@ -1,6 +1,6 @@
 import './style.css';
 import { navigateTo, goBack } from './utils/navigation.js';
-import { getSearchTerm, updateSearchInputs, clearResults, showLoadingState, showNoResults } from './utils/dom.js';
+import { getSearchTerm, updateSearchInputs, clearResults, showLoadingState, showNoResults, renderSkeletonLoader } from './utils/dom.js';
 import { searchProductos, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
 import { renderProductos, renderNegocios } from './components/renderer.js';
 
@@ -28,6 +28,9 @@ async function performSearch() {
   // Limpiar mensajes y contenedores
   clearResults();
   showLoadingState();
+  // Mostrar la vista de resultados de productos y un skeleton mientras cargan
+  navigateTo('view-results-product');
+  renderSkeletonLoader();
 
   try {
     // Nivel 1: Productos
