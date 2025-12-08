@@ -249,5 +249,32 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.view-section').forEach(el => {
     if(el.id !== 'view-home') el.classList.add('hidden');
   });
+
+  // Inicializar placeholder dinámico en el input de home
+  initDynamicPlaceholder();
 });
+
+/**
+ * Rotate dynamic placeholder on the home search input to teach users examples.
+ */
+function initDynamicPlaceholder() {
+  const input = document.getElementById('search-input-home');
+  if (!input) return;
+
+  const placeholders = [
+    "¿Qué estás buscando?",
+    "Busca 'Cambio de aceite'...",
+    "Busca 'Tengo hambre'...",
+    "Busca 'Tornillo fix'...",
+    "Busca 'Farmacia de turno'...",
+    "Busca 'Hamburguesa completa'..."
+  ];
+
+  let index = 0;
+  // Cambiar cada 2.5 segundos
+  setInterval(() => {
+    index = (index + 1) % placeholders.length;
+    input.setAttribute('placeholder', placeholders[index]);
+  }, 2500);
+}
 
