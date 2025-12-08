@@ -5,11 +5,27 @@ import { supabase } from '../api/supabase.js';
  */
 export async function searchProductos(term) {
   try {
-    const { data, error } = await supabase
+    const original = String(term || '').trim();
+
+    // Construir consulta inicial
+    let query = supabase
       .from('productos')
       // Traer explícitamente el rubro (y el id/nombre) del negocio asociado
-      .select('*, negocios(id, rubro, nombre, google_place_id)')
-      .ilike('titulo', `%${term}%`);
+      .select('*, negocios(id, rubro, nombre, google_place_id)');
+
+    // Filtro por término y posible singular (para cubrir plurales simples)
+    const termClean = original;
+    let filters = [`titulo.ilike.%${termClean}%`];
+
+    if (termClean.length > 3 && termClean.endsWith('s')) {
+      const singular = termClean.slice(0, -1);
+      filters.push(`titulo.ilike.%${singular}%`);
+    }
+
+    // Aplicar OR con los filtros generados
+    query = query.or(filters.join(','));
+
+    const { data, error } = await query;
     
     if (error) throw error;
     return data;

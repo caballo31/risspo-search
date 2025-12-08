@@ -1,38 +1,37 @@
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 
-// 1. Definimos la función CORS (¡Esto es lo que faltaba!)
-function setCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-}
-
-// 2. Configuración de clientes
+// Inicializamos clientes fuera del handler para reutilizar conexión (Mejor rendimiento)
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const supabase = createClient(
+  process.env.VITE_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
-// Usar Service Role para permisos de lectura/escritura si fuera necesario, o Anon para lectura pública
-// En backend es seguro usar Service Role.
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-// 3. El Handler Principal
 export default async function handler(req, res) {
-  // Aplicamos CORS al principio de todo
+  // --- 1. Definición de CORS (Adentro para evitar ReferenceError) ---
+  const setCors = (response) => {
+    response.setHeader('Access-Control-Allow-Origin', '*');
+    response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  };
+
+  // --- 2. Aplicar CORS ---
   setCors(res);
 
+  // Manejo de Preflight (OPTIONS)
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
+  // --- 3. Lógica de Búsqueda ---
   const term = (req.query?.term) || (req.body && req.body.term) || '';
   
-  console.log(`🔍 [API] Buscando: "${term}"`);
+  // Log para depuración en Vercel
+  console.log(`🔍 [API] Buscando término: "${term}"`);
 
   if (!term) {
-    return res.status(400).json({ error: 'Missing term' });
+    return res.status(400).json({ error: 'Falta el término de búsqueda (term)' });
   }
 
   try {
@@ -46,14 +45,15 @@ export default async function handler(req, res) {
     const vector = embResp.data?.[0]?.embedding;
     
     if (!vector) {
-      throw new Error("OpenAI no devolvió vector");
+      throw new Error("OpenAI no devolvió ningún vector.");
     }
 
     // B. Buscar en Supabase
-    console.log("🗄️ [API] Consultando DB...");
+    console.log("🗄️ [API] Consultando Supabase match_negocios...");
+    
     const { data, error } = await supabase.rpc('match_negocios', {
       query_embedding: vector,
-      match_threshold: 0.2, // Umbral bajo para que entren resultados abstractos
+      match_threshold: 0.3, // Umbral calibrado
       match_count: 10
     });
 
@@ -62,7 +62,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: error.message });
     }
 
-    console.log(`🎉 [API] Encontrados: ${data?.length || 0}`);
+    console.log(`🎉 [API] Encontrados: ${data?.length || 0} resultados.`);
     
     return res.status(200).json({ results: data || [] });
 
