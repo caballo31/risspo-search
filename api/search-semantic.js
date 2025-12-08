@@ -1,63 +1,60 @@
-import OpenAI from 'openai';
-import { createClient } from '@supabase/supabase-js';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// Usar la URL y SERVICE ROLE key en el entorno de Vercel (no usar anon key)
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-function setCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-}
+// ... imports ...
 
 export default async function handler(req, res) {
   setCors(res);
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   const term = (req.query?.term) || (req.body && req.body.term) || '';
+  
+  // 1. LOG DE ENTRADA
+  console.log(`🔍 [API] Iniciando búsqueda semántica para: "${term}"`);
+
   if (!term) {
+    console.warn("⚠️ [API] Término vacío recibido");
     res.status(400).json({ error: 'Missing term' });
     return;
   }
 
   try {
-    // Vectorizar el término
+    // 2. LOG ANTES DE OPENAI
+    console.log("🤖 [API] Llamando a OpenAI...");
+    
     const embResp = await openai.embeddings.create({
       model: 'text-embedding-3-small',
       input: term
     });
 
     const vector = embResp.data?.[0]?.embedding;
-    if (!vector) {
-      res.status(500).json({ error: 'No embedding returned' });
-      return;
+    
+    // 3. LOG DESPUÉS DE OPENAI
+    if (vector) {
+      console.log(`✅ [API] Vector generado (longitud: ${vector.length})`);
+    } else {
+      console.error("❌ [API] OpenAI no devolvió vector");
     }
 
-    // Llamar al RPC match_negocios en Supabase
+    // 4. LOG ANTES DE SUPABASE
+    console.log("🗄️ [API] Consultando Supabase match_negocios...");
+
     const { data, error } = await supabase.rpc('match_negocios', {
       query_embedding: vector,
-      match_threshold: 0.5,
+      match_threshold: 0.3, // Confirma que aquí dice 0.3
       match_count: 10
     });
 
     if (error) {
-      console.error('RPC match_negocios error:', error);
+      console.error('❌ [API] Supabase Error:', error);
       res.status(500).json({ error: error.message || error });
       return;
     }
 
+    // 5. LOG FINAL
+    console.log(`🎉 [API] Supabase encontró ${data?.length || 0} resultados.`);
+    
     res.status(200).json({ results: data || [] });
+
   } catch (err) {
-    console.error('search-semantic error:', err);
+    console.error('💥 [API] Error General:', err);
     res.status(500).json({ error: err.message || String(err) });
   }
 }
