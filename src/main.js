@@ -220,23 +220,12 @@ async function performSearch() {
  * Busca negocios por categoría/rubro
  */
 async function searchByCategory(category) {
+  // 1) Poner el término en todos los inputs para mantener la UI sincronizada
   updateSearchInputs(category);
-  clearResults();
-  showLoadingState();
-  
-  try {
-    const negocios = await searchNegociosByRubro(category);
-    if (negocios && negocios.length > 0) {
-      renderNegocios(negocios);
-      navigateTo('view-results-business');
-    } else {
-      showNoResults(category);
-      navigateTo('view-results-business');
-    }
-  } catch (error) {
-    console.error('Error en búsqueda por categoría:', error);
-    alert('Ocurrió un error al realizar la búsqueda.');
-  }
+
+  // 2) Delegar la búsqueda al motor principal (performSearch) que ya maneja keywords, rubros,
+  //    búsqueda semántica y toda la lógica de waterfall
+  await performSearch();
 }
 
 /**

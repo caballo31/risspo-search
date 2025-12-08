@@ -5,7 +5,7 @@ const OpenAI = require('openai');
 
 // --- CONFIGURACIÓN ---
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY; // Usa la Service Role
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_KEY || !OPENAI_KEY) {
@@ -16,60 +16,51 @@ if (!SUPABASE_URL || !SUPABASE_KEY || !OPENAI_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
-// --- DICCIONARIO DE CONCEPTOS (EL CEREBRO) ---
-// Esto le enseña a la IA qué significa cada rubro en tu contexto local
-const conceptos = {
-  // 🍔 COMIDA PREPARADA (Salidas, Delivery, Hambre)
-  'pizzeria': 'comida preparada, cena, almuerzo, restaurante, hambre, delivery, pizza, empanadas, comida rapida. NO HERRAMIENTAS.',
-  'hamburgueseria': 'comida rapida, cena, almuerzo, restaurante, hambre, burger, papas fritas, panchos, comida al paso.',
-  'rotiseria': 'comida para llevar, cena, almuerzo, hambre, viandas, comida casera, milanesas con papas, delivery.',
-  'restaurante': 'salir a comer, cena, almuerzo, platos elaborados, gastronomia, reunion amigos, familia, servicio de mesa.',
-  'parrilla': 'asado, carne a la parrilla, cena, almuerzo, restaurante, choripan, vacio, costilla. NO VENTA DE PARRILLAS DE HIERRO.',
-  'cerveceria': 'bebidas, alcohol, cerveza artesanal, bar, picadas, salida nocturna, amigos, tragos.',
-  'cafeteria': 'desayuno, merienda, cafe, medialunas, tostados, reunion, trabajo.',
-  'panaderia': 'pan, facturas, desayuno, merienda, tortas, masas, comida al paso.',
+// --- CEREBRO DINÁMICO ---
+async function obtenerKeywordsPorRubro() {
+  console.log("📥 Descargando tu diccionario de palabras clave...");
+  
+  // Traemos todas las keywords de tu base de datos
+  const { data: keywords, error } = await supabase
+    .from('palabras_clave')
+    .select('keyword, rubro_asociado');
 
-  // 🍎 ALIMENTOS Y BEBIDAS (Insumos, Supermercado)
-  'supermercado': 'comida, bebida, mercaderia, compras hogar, despensa, fideos, arroz, yerba, limpieza.',
-  'almacen': 'kiosco, despensa, comida, bebida, compras diarias, cigarrillos, golosinas, rapido.',
-  'verduleria': 'frutas, verduras, papas, cebollas, tomates, ensalada, comida saludable, cocina.',
-  'carniceria': 'carne cruda, asado, milanesas, pollo, cerdo, embutidos, cocina.',
+  if (error) {
+    console.error("⚠️ Error leyendo palabras clave:", error.message);
+    return {};
+  }
 
-  // 🛠️ HOGAR Y CONSTRUCCIÓN (Reparaciones, Obra)
-  'ferreteria': 'herramientas, arreglos, reparaciones, tornillos, hogar, construccion, pegamento, clavos, martillos. NO COMIDA.',
-  'corralon': 'materiales construccion, obra, cemento, ladrillos, arena, chapas, hierro, albañileria.',
-  'pintureria': 'pintura, remodelacion, hogar, pinceles, rodillos, impermeabilizante.',
-  'maderera': 'madera, machimbre, tirantes, techos, muebles, carpinteria.',
-  'electricidad': 'cables, focos, iluminacion, enchufes, instalaciones electricas, reparaciones.',
-  'gasista': 'gas, garrafas, estufas, calefones, reparacion gas, plomeria.',
-  'vidrieria': 'vidrios, espejos, ventanas, reparacion vidrios.',
-  'muebleria': 'muebles, hogar, camas, mesas, sillas, decoracion.',
+  // Las agrupamos por rubro: { 'ferreteria': 'martillo, clavo...', 'pizzeria': 'pizza, muzzarella...' }
+  const mapa = {};
+  keywords.forEach(k => {
+    const rubro = k.rubro_asociado.toLowerCase().trim();
+    if (!mapa[rubro]) mapa[rubro] = [];
+    mapa[rubro].push(k.keyword);
+  });
 
-  // 🚗 AUTOMOTOR (Mecánica, Repuestos)
-  'gomeria': 'reparacion neumaticos, pinchadura, auxilio, ruedas, aire, parches, auto, moto, vehiculo. NO COMIDA.',
-  'taller_mecanico': 'reparacion auto, mecanica, servicio tecnico, arreglo motor, frenos, vehiculo.',
-  'lubricentro': 'cambio aceite, filtros, servicio auto, mantenimiento vehiculo, motor.',
-  'repuestos_autos': 'autopartes, repuestos, accesorios auto, bateria, luces coche.',
-  'repuestos_motos': 'repuestos moto, accesorios moto, casco, cadena, aceite moto.',
+  // Convertimos los arrays a strings separados por coma
+  Object.keys(mapa).forEach(r => {
+    mapa[r] = mapa[r].join(', ');
+  });
 
-  // 💊 SALUD Y VARIOS
-  'farmacia': 'medicamentos, remedios, salud, farmacia de turno, dolor, pastillas, primeros auxilios, perfumeria.',
-  'libreria': 'utiles escolares, fotocopias, libros, papel, oficina, regalos.',
-  'indumentaria': 'ropa, moda, vestimenta, tienda de ropa, regalos.'
-};
+  console.log(`✅ Diccionario cargado con ${keywords.length} palabras para ${Object.keys(mapa).length} rubros.`);
+  return mapa;
+}
 
 async function generarEmbeddings() {
-  console.log("🚀 Iniciando proceso de vectorización INTELIGENTE...");
+  // 1. Preparamos el cerebro con tus datos reales
+  const keywordsMap = await obtenerKeywordsPorRubro();
 
-  // Procesamos de a 500 negocios que NO tengan vector (o que hayas puesto en NULL)
+  console.log("🚀 Iniciando vectorización enriquecida...");
+
   const { data: negocios, error } = await supabase
     .from('negocios')
     .select('id, nombre, rubro, direccion, horarios')
     .is('embedding', null) 
-    .limit(1000); // Subimos el límite para agarrar todos
+    .limit(1000);
 
   if (error) return console.error("❌ Error Supabase:", error.message);
-  if (!negocios || negocios.length === 0) return console.log("✅ No hay negocios pendientes.");
+  if (!negocios || negocios.length === 0) return console.log("✅ Todo al día.");
 
   console.log(`📦 Procesando ${negocios.length} negocios...`);
 
@@ -77,40 +68,41 @@ async function generarEmbeddings() {
 
   for (const negocio of negocios) {
     try {
-      // 1. Detección Inteligente de Contexto
-      let rubroNormalizado = negocio.rubro ? negocio.rubro.toLowerCase().trim() : '';
-      let palabrasExtra = conceptos[rubroNormalizado];
+      const rubro = negocio.rubro ? negocio.rubro.toLowerCase().trim() : 'varios';
+      
+      // 2. Buscamos las keywords específicas para este negocio
+      let contextoKeywords = keywordsMap[rubro] || '';
 
-      // Si el rubro es "varios" o no existe, intentamos adivinar por el nombre
-      if (!palabrasExtra || rubroNormalizado === 'varios') {
-        const nombre = negocio.nombre.toLowerCase();
-        
-        if (nombre.includes('gomeria')) palabrasExtra = conceptos['gomeria'];
-        else if (nombre.includes('kiosco') || nombre.includes('drugstore') || nombre.includes('maxi')) palabrasExtra = conceptos['almacen'];
-        else if (nombre.includes('taller')) palabrasExtra = conceptos['taller_mecanico'];
-        else if (nombre.includes('parrilla')) palabrasExtra = conceptos['parrilla']; 
-        else if (nombre.includes('farmacia')) palabrasExtra = conceptos['farmacia'];
-        else palabrasExtra = 'comercio local tienda servicios varios';
+      // Si no tiene keywords específicas, usamos un fallback genérico o intentamos por nombre
+      if (!contextoKeywords && rubro === 'varios') {
+         // Lógica de rescate simple para "varios"
+         if (negocio.nombre.toLowerCase().includes('kiosco')) contextoKeywords = 'golosinas, bebidas, cigarrillos';
+         if (negocio.nombre.toLowerCase().includes('taller')) contextoKeywords = 'mecanica, reparacion, auto';
       }
 
-      // 2. Crear el Texto Rico para la IA
+      // 3. Crear el Texto Rico (EL SECRETO)
+      // Le decimos a la IA: "Este negocio es X y se relaciona con estas palabras clave: [TUS KEYWORDS]"
       const textoParaIA = `
         Negocio: ${negocio.nombre}
         Rubro: ${negocio.rubro}
-        Categoría y Servicios: ${palabrasExtra}
         Dirección: ${negocio.direccion || ''}
-        Horarios: ${JSON.stringify(negocio.horarios) || 'No especificado'}
-        Contexto: Local en Chajarí. ${palabrasExtra}.
+        
+        CONTEXTO Y PALABRAS CLAVE:
+        ${contextoKeywords}
+        
+        DEFINICIÓN NEGATIVA (Anti-Alucinación):
+        ${rubro === 'ferreteria' ? 'NO VENDEN ROPA. NO VENDEN COMIDA.' : ''}
+        ${rubro === 'indumentaria' ? 'NO ES FERRETERIA. NO VENDEN HERRAMIENTAS.' : ''}
       `.replace(/\s+/g, ' ').trim();
 
-      // 3. Generar Vector
+      // 4. Generar Vector
       const response = await openai.embeddings.create({
         model: "text-embedding-3-small",
         input: textoParaIA,
       });
       const vector = response.data[0].embedding;
 
-      // 4. Guardar
+      // 5. Guardar
       await supabase
         .from('negocios')
         .update({ embedding: vector })
@@ -124,7 +116,7 @@ async function generarEmbeddings() {
     }
   }
 
-  console.log(`\n🎉 Finalizado. ${procesados} vectores generados.`);
+  console.log(`\n🎉 Finalizado. ${procesados} negocios enriquecidos con tus keywords.`);
 }
 
 generarEmbeddings();
