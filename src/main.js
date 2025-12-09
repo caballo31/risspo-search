@@ -9,7 +9,7 @@ window.navigateTo = navigateTo;
 window.goBack = goBack;
 window.performSearch = performSearch;
 window.searchByCategory = searchByCategory;
-window.handleSearchKeyPress = handleSearchKeyPress;
+window.handleSearchKeyUp = handleSearchKeyUp;
 
 /**
  * Maneja la búsqueda principal con lógica en cascada
@@ -232,10 +232,13 @@ async function searchByCategory(category) {
 }
 
 /**
- * Maneja el evento de tecla Enter en los inputs
+ * Maneja el evento keyup en los inputs (reemplaza keypress para mejor soporte móvil).
+ * Detecta Enter y ejecuta búsqueda, cerrando el teclado virtual.
  */
-function handleSearchKeyPress(event) {
-  if (event.key === 'Enter') {
+function handleSearchKeyUp(event) {
+  if (event.key === 'Enter' || event.keyCode === 13) {
+    event.preventDefault();
+    event.target.blur(); // Cerrar teclado virtual en móviles
     performSearch();
   }
 }

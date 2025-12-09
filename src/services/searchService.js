@@ -5,7 +5,8 @@ import { supabase } from '../api/supabase.js';
  */
 export async function searchProductos(term) {
   try {
-    const original = String(term || '').trim();
+    // Sanitizar: eliminar puntos que teclados móviles insertan automáticamente
+    const original = String(term || '').trim().replace(/[.]/g, '');
 
     // Construir consulta inicial
     let query = supabase
