@@ -81,7 +81,7 @@ async function performSearch() {
     console.log(`  🏢 Negocios por nombre: ${negociosPorNombre?.length || 0}`);
 
     // Combinar negocios sin duplicados
-    const negociosDirectos = [];
+    let negociosFinales = [];
     const seenNegocios = new Set();
 
     function addNegocios(arr) {
@@ -90,7 +90,7 @@ async function performSearch() {
         const key = n.id ?? n.google_place_id ?? JSON.stringify(n);
         if (!seenNegocios.has(key)) {
           seenNegocios.add(key);
-          negociosDirectos.push(n);
+          negociosFinales.push(n);
         }
       });
     }
@@ -98,20 +98,38 @@ async function performSearch() {
     addNegocios(negociosPorRubro);
     addNegocios(negociosPorNombre);
 
+    // ==================== PASO NUEVO: INFERENCIA DE NEGOCIOS ====================
+    // Si encontramos productos pero NO negocios, inferimos negocios del rubro del primer producto
+    if (productos && productos.length > 0 && negociosFinales.length === 0) {
+      const rubroDelProducto = productos[0]?.negocios?.rubro;
+      if (rubroDelProducto) {
+        console.log(`💡 INFERENCIA: Buscando negocios del rubro "${rubroDelProducto}"...`);
+        const negociosInferidos = await searchNegociosByRubro(rubroDelProducto);
+        
+        if (negociosInferidos && negociosInferidos.length > 0) {
+          console.log(`  ✅ Encontrados ${negociosInferidos.length} negocios inferidos`);
+          addNegocios(negociosInferidos);
+        } else {
+          console.log(`  ❌ No se encontraron negocios para el rubro "${rubroDelProducto}"`);
+        }
+      }
+    }
+
     // Evaluación Fase 1: ¿hay CUALQUIER resultado?
-    const totalFase1 = (productos?.length || 0) + (negociosDirectos.length || 0);
+    const productosFinales = productos || [];
+    const totalFase1 = productosFinales.length + negociosFinales.length;
 
     if (totalFase1 > 0) {
       console.log(`✅ FASE 1 EXITOSA: ${totalFase1} resultado(s) encontrado(s). Renderizando...`);
 
       // Caso A: Hay productos
-      if (productos && productos.length > 0) {
+      if (productosFinales.length > 0) {
         console.log('  → Renderizando productos');
-        renderProductos(productos);
+        renderProductos(productosFinales);
 
-        // Si hay negocios directos, mostrarlos como sugerencias
-        if (negociosDirectos.length > 0) {
-          console.log('  → Agregando negocios como sugerencias');
+        // Si hay negocios (directos o inferidos), mostrarlos como sugerencias
+        if (negociosFinales.length > 0) {
+          console.log(`  → Agregando ${negociosFinales.length} negocio(s) como sugerencias`);
           const productsContainer = document.getElementById('products-container');
           if (productsContainer) {
             const separator = document.createElement('div');
@@ -122,7 +140,7 @@ async function performSearch() {
             const sugGrid = document.createElement('div');
             sugGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4';
 
-            negociosDirectos.forEach(negocio => {
+            negociosFinales.forEach(negocio => {
               const card = createBusinessCard(negocio);
               sugGrid.appendChild(card);
             });
@@ -136,9 +154,9 @@ async function performSearch() {
       }
 
       // Caso B: No hay productos, pero sí negocios
-      if (negociosDirectos.length > 0) {
+      if (negociosFinales.length > 0) {
         console.log('  → Mostrando solo negocios');
-        renderNegocios(negociosDirectos);
+        renderNegocios(negociosFinales);
         navigateTo('view-results-business');
         return;
       }
@@ -162,19 +180,35 @@ async function performSearch() {
     console.log(`  🔽 Productos filtrados: ${productosFiltrados.length}`);
     console.log(`  🔽 Negocios filtrados: ${negociosFiltrados.length}`);
 
-    const totalFase2 = (productosFiltrados?.length || 0) + (negociosFiltrados?.length || 0);
+    // ==================== PASO DE INFERENCIA EN FASE 2 ====================
+    // Aplicar inferencia también en resultados semánticos
+    let negociosFase2Final = negociosFiltrados;
+    if (productosFiltrados.length > 0 && negociosFase2Final.length === 0) {
+      const rubroDelProducto = productosFiltrados[0]?.negocios?.rubro;
+      if (rubroDelProducto) {
+        console.log(`💡 INFERENCIA (Fase 2): Buscando negocios del rubro "${rubroDelProducto}"...`);
+        const negociosInferidos = await searchNegociosByRubro(rubroDelProducto);
+        
+        if (negociosInferidos && negociosInferidos.length > 0) {
+          console.log(`  ✅ Encontrados ${negociosInferidos.length} negocios inferidos en Fase 2`);
+          negociosFase2Final = negociosInferidos;
+        }
+      }
+    }
+
+    const totalFase2 = productosFiltrados.length + negociosFase2Final.length;
 
     if (totalFase2 > 0) {
       console.log(`✅ FASE 2 EXITOSA: ${totalFase2} resultado(s) relevante(s) encontrado(s) por IA. Renderizando...`);
 
       // Mostrar productos semánticos si existen
-      if (productosFiltrados && productosFiltrados.length > 0) {
+      if (productosFiltrados.length > 0) {
         console.log('  → Renderizando productos semánticos');
         renderProductos(productosFiltrados);
 
-        // Si hay negocios semánticos, mostrarlos como sugerencias
-        if (negociosFiltrados && negociosFiltrados.length > 0) {
-          console.log('  → Agregando negocios semánticos como sugerencias');
+        // Si hay negocios semánticos o inferidos, mostrarlos como sugerencias
+        if (negociosFase2Final.length > 0) {
+          console.log(`  → Agregando ${negociosFase2Final.length} negocio(s) semántico(s)/inferido(s) como sugerencias`);
           const productsContainer = document.getElementById('products-container');
           if (productsContainer) {
             const separator = document.createElement('div');
@@ -185,7 +219,7 @@ async function performSearch() {
             const sugGrid = document.createElement('div');
             sugGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4';
 
-            negociosFiltrados.forEach(negocio => {
+            negociosFase2Final.forEach(negocio => {
               const card = createBusinessCard(negocio);
               sugGrid.appendChild(card);
             });
@@ -198,10 +232,10 @@ async function performSearch() {
         return;
       }
 
-      // Si solo hay negocios semánticos
-      if (negociosFiltrados && negociosFiltrados.length > 0) {
-        console.log('  → Mostrando solo negocios semánticos');
-        renderNegocios(negociosFiltrados);
+      // Si solo hay negocios semánticos/inferidos
+      if (negociosFase2Final.length > 0) {
+        console.log('  → Mostrando solo negocios semánticos/inferidos');
+        renderNegocios(negociosFase2Final);
         navigateTo('view-results-business');
         return;
       }
