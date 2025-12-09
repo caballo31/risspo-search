@@ -65,7 +65,7 @@
             <div class="relative max-w-xl mx-auto">
                 <div class="flex items-center bg-white rounded-2xl p-2 shadow-lg border border-gray-200/80 group focus-within:ring-2 focus-within:ring-orange-100 transition-all">
                 <span class="material-symbols-outlined pl-3 text-gray-400 group-focus-within:text-orange-highlight">search</span>
-                <input id="search-input-home" class="w-full bg-transparent border-none text-gray-800 placeholder-gray-500 focus:ring-0 focus:outline-none text-lg py-3" placeholder="¿Qué buscás hoy?" type="search" onkeyup="handleSearchKeyUp(event)"/>
+                <input id="search-input-home" class="w-full bg-transparent border-none text-gray-800 placeholder-gray-500 focus:ring-0 focus:outline-none text-lg py-3" placeholder="¿Qué buscás hoy?" type="text" onkeyup="handleSearchKeyUp(event)"/>
                 <button onclick="performSearch()" class="bg-white rounded-xl p-3 ml-2 shadow-sm border border-gray-200/80 hover:bg-orange-highlight hover:text-white hover:border-orange-highlight transition-all active:scale-95">
                     <span class="material-symbols-outlined">arrow_forward</span>
                 </button>
@@ -81,7 +81,7 @@
         <div class="relative mb-8 sticky top-0 md:top-4 z-30">
           <div class="flex items-center bg-white rounded-full p-2 shadow-xl border border-gray-200/60 max-w-2xl mx-auto">
             <span class="material-symbols-outlined pl-3 text-gray-500">search</span>
-            <input id="search-input-product" class="w-full bg-transparent border-none text-gray-900 placeholder-gray-500 focus:ring-0 focus:outline-none" type="search" placeholder="¿Qué buscás?" onkeyup="handleSearchKeyUp(event)"/>
+            <input id="search-input-product" class="w-full bg-transparent border-none text-gray-900 placeholder-gray-500 focus:ring-0 focus:outline-none" type="text" placeholder="¿Qué buscás?" onkeyup="handleSearchKeyUp(event)"/>
             <button onclick="navigateTo('view-home')" class="bg-gray-100 rounded-full p-2 ml-2 hover:bg-gray-200 transition-colors">
               <span class="material-symbols-outlined text-gray-600 !text-lg">close</span>
             </button>
@@ -103,7 +103,7 @@
         <div class="relative mb-8 sticky top-0 md:top-4 z-30">
           <div class="flex items-center bg-white rounded-full p-2 shadow-xl border border-gray-200/60 max-w-2xl mx-auto">
             <span class="material-symbols-outlined pl-3 text-gray-500">search</span>
-            <input id="search-input-business" class="w-full bg-transparent border-none text-gray-900 placeholder-gray-500 focus:ring-0 focus:outline-none" type="search" placeholder="¿Qué buscás?" onkeyup="handleSearchKeyUp(event)"/>
+            <input id="search-input-business" class="w-full bg-transparent border-none text-gray-900 placeholder-gray-500 focus:ring-0 focus:outline-none" type="text" placeholder="¿Qué buscás?" onkeyup="handleSearchKeyUp(event)"/>
             <button onclick="navigateTo('view-home')" class="bg-gray-100 rounded-full p-2 ml-2 hover:bg-gray-200 transition-colors">
               <span class="material-symbols-outlined text-gray-600 !text-lg">close</span>
             </button>
