@@ -2,7 +2,7 @@ import './style.css';
 import { navigateTo, goBack } from './utils/navigation.js';
 import { getSearchTerm, updateSearchInputs, clearResults, showLoadingState, showNoResults, renderSkeletonLoader } from './utils/dom.js';
 import { searchProductos, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
-import { renderProductos, renderNegocios } from './components/renderer.js';
+import { renderProductos, renderNegocios, createBusinessCard } from './components/renderer.js';
 
 // Exponer funciones globalmente para onclick handlers en HTML
 window.navigateTo = navigateTo;
@@ -92,26 +92,7 @@ async function performSearch() {
             if (seen.has(key)) return;
             seen.add(key);
 
-            const card = document.createElement('div');
-            card.className = 'bg-white rounded-2xl border border-gray-200/60 p-5 shadow-sm hover:shadow-md hover:border-orange-100 transition-all flex flex-col h-full';
-
-            const logoUrl = negocio.logo_url || 'https://via.placeholder.com/400?text=';
-            const direccion = negocio.direccion ? `<div class="text-sm text-gray-500 mt-2">${negocio.direccion}</div>` : '';
-            const telefono = negocio.telefono || '';
-            const whatsapp = negocio.whatsapp || telefono;
-
-            card.innerHTML = `
-              <div class="relative h-28 bg-gray-100 rounded-xl mb-3 overflow-hidden">
-                <img alt="${negocio.nombre || ''}" class="h-full w-full object-cover" src="${logoUrl}" onerror="this.style.display='none'">
-              </div>
-              <h3 class="font-bold text-lg text-gray-900">${negocio.nombre || 'Sin nombre'}</h3>
-              ${direccion}
-              <div class="mt-4 flex gap-2">
-                <a href="${telefono ? 'tel:' + telefono.replace(/\D/g, '') : '#'}" class="flex-1 bg-white border border-gray-200 text-gray-700 font-bold py-2 rounded-xl text-center text-sm">Llamar</a>
-                <a href="${whatsapp ? 'https://wa.me/' + whatsapp.replace(/\D/g, '') : '#'}" class="flex-1 bg-white border border-gray-200 text-gray-700 font-bold py-2 rounded-xl text-center text-sm">WhatsApp</a>
-              </div>
-            `;
-
+            const card = createBusinessCard(negocio);
             sugGrid.appendChild(card);
           });
 

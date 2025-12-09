@@ -112,6 +112,89 @@ function getEstadoHorario(horarios) {
   return { estado: 'abierto', texto: horarioHoy.horario };
 }
 
+/**
+ * Crea una tarjeta DOM de negocio con toda la lógica de horarios, botones y navegación.
+ * @param {Object} negocio Objeto negocio con propiedades: nombre, logo_url, direccion, telefono, whatsapp, horarios, google_url.
+ * @returns {HTMLElement} Elemento div con la tarjeta renderizada.
+ */
+export function createBusinessCard(negocio) {
+  const card = document.createElement('div');
+  card.className = 'bg-white rounded-2xl border border-gray-200/60 p-5 shadow-sm hover:shadow-md hover:border-orange-100 transition-all flex flex-col h-full';
+
+  // Enriquecer con información de horario
+  const horarioInfo = getEstadoHorario(negocio.horarios);
+
+  const logoUrl = negocio.logo_url || 'https://via.placeholder.com/400?text=';
+  
+  const telefono = negocio.telefono || '';
+  const whatsapp = negocio.whatsapp || telefono;
+  const telHref = telefono ? `tel:${telefono.replace(/\D/g, '')}` : '#';
+  const waHref = whatsapp ? `https://wa.me/${whatsapp.replace(/\D/g, '')}` : '#';
+
+  // Badge y texto de horario
+  let horarioHtml = '';
+  if (horarioInfo) {
+    const badgeClass = horarioInfo.estado === 'abierto'
+      ? 'bg-green-100 text-green-800'
+      : 'bg-red-100 text-red-800';
+    const badgeText = horarioInfo.estado === 'abierto' ? 'Abierto' : 'Cerrado Hoy';
+    const horarioTexto = horarioInfo.estado === 'abierto' ? `• ${horarioInfo.texto}` : '';
+
+    horarioHtml = `
+      <div class="flex items-center gap-2 mt-2 flex-wrap">
+        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badgeClass}">
+          ${badgeText}
+        </span>
+        <span class="text-xs text-gray-500">${horarioTexto}</span>
+      </div>
+    `;
+  }
+
+  // Dirección como enlace
+  const direccionHtml = negocio.direccion
+    ? `<a href="${negocio.google_url || '#'}" target="_blank" rel="noopener noreferrer" class="flex items-start text-sm mt-3 group">
+        <span class="material-symbols-outlined !text-lg mr-1.5 text-gray-400 group-hover:text-orange-highlight">location_on</span>
+        <span class="text-gray-700 group-hover:text-orange-highlight">${negocio.direccion}</span>
+      </a>`
+    : '';
+
+  card.innerHTML = `
+    <div class="relative h-32 bg-gray-100 rounded-xl mb-4 overflow-hidden group">
+      <img alt="${negocio.nombre || ''} logo" class="h-full w-full object-cover group-hover:scale-105 transition-transform" src="${logoUrl}" onerror="this.style.display='none'">
+    </div>
+    <div class="flex-grow">
+      <h3 class="font-bold text-xl text-gray-900 leading-tight">${negocio.nombre || 'Sin nombre'}</h3>
+      
+      ${direccionHtml}
+      ${horarioHtml}
+    </div>
+
+    <div class="mt-5 pt-5 border-t border-gray-100">
+      <div class="grid grid-cols-2 gap-2">
+          <a href="${telHref}" ${!telefono ? 'style="pointer-events: none; opacity: 0.5;"' : ''} class="col-span-1 bg-white text-gray-700 border border-gray-200 font-bold py-2.5 rounded-xl text-center text-sm hover:bg-gray-50 flex items-center justify-center gap-1.5 transition-colors">
+              <span class="material-symbols-outlined !text-base">call</span> Llamar
+          </a>
+          <a href="${waHref}" ${!whatsapp ? 'style="pointer-events: none; opacity: 0.5;"' : ''} target="_blank" rel="noopener noreferrer" class="col-span-1 bg-white text-gray-700 border border-gray-200 font-bold py-2.5 rounded-xl text-center text-sm hover:bg-gray-50 flex items-center justify-center gap-1.5 transition-colors">
+              <span class="material-symbols-outlined !text-base">chat</span> WhatsApp
+          </a>
+      </div>
+      <button class="w-full bg-orange-50 text-orange-600 font-bold py-3 rounded-xl mt-2 text-center flex items-center justify-center gap-2 hover:bg-orange-100 transition-colors text-sm" data-navigate="view-profile">
+          Ver Perfil
+      </button>
+    </div>
+  `;
+
+  const navigateBtn = card.querySelector('[data-navigate]');
+  if (navigateBtn) {
+    navigateBtn.addEventListener('click', () => {
+      const navigateTo = window.navigateTo;
+      if (navigateTo) navigateTo('view-profile');
+    });
+  }
+
+  return card;
+}
+
 
 /**
  * Renderiza las tarjetas de negocios con el nuevo diseño y lógica.
@@ -142,77 +225,7 @@ export function renderNegocios(negocios, message = null) {
   });
 
   enrichedNegocios.forEach(negocio => {
-    const card = document.createElement('div');
-    card.className = 'bg-white rounded-2xl border border-gray-200/60 p-5 shadow-sm hover:shadow-md hover:border-orange-100 transition-all flex flex-col h-full';
-
-    const logoUrl = negocio.logo_url || 'https://via.placeholder.com/400?text=';
-    
-    const telefono = negocio.telefono || '';
-    const whatsapp = negocio.whatsapp || telefono;
-    const telHref = telefono ? `tel:${telefono.replace(/\D/g, '')}` : '#';
-    const waHref = whatsapp ? `https://wa.me/${whatsapp.replace(/\D/g, '')}` : '#';
-
-    // Badge y texto de horario
-    let horarioHtml = '';
-    if (negocio.horarioInfo) {
-      const badgeClass = negocio.horarioInfo.estado === 'abierto'
-        ? 'bg-green-100 text-green-800'
-        : 'bg-red-100 text-red-800';
-      const badgeText = negocio.horarioInfo.estado === 'abierto' ? 'Abierto' : 'Cerrado Hoy';
-      const horarioTexto = negocio.horarioInfo.estado === 'abierto' ? `• ${negocio.horarioInfo.texto}` : '';
-
-      horarioHtml = `
-        <div class="flex items-center gap-2 mt-2 flex-wrap">
-          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badgeClass}">
-            ${badgeText}
-          </span>
-          <span class="text-xs text-gray-500">${horarioTexto}</span>
-        </div>
-      `;
-    }
-
-    // Dirección como enlace
-    const direccionHtml = negocio.direccion
-      ? `<a href="${negocio.google_url || '#'}" target="_blank" rel="noopener noreferrer" class="flex items-start text-sm mt-3 group">
-          <span class="material-symbols-outlined !text-lg mr-1.5 text-gray-400 group-hover:text-orange-highlight">location_on</span>
-          <span class="text-gray-700 group-hover:text-orange-highlight">${negocio.direccion}</span>
-        </a>`
-      : '';
-
-    card.innerHTML = `
-      <div class="relative h-32 bg-gray-100 rounded-xl mb-4 overflow-hidden group">
-        <img alt="${negocio.nombre || ''} logo" class="h-full w-full object-cover group-hover:scale-105 transition-transform" src="${logoUrl}" onerror="this.style.display='none'">
-      </div>
-      <div class="flex-grow">
-        <h3 class="font-bold text-xl text-gray-900 leading-tight">${negocio.nombre || 'Sin nombre'}</h3>
-        
-        ${direccionHtml}
-        ${horarioHtml}
-      </div>
-
-      <div class="mt-5 pt-5 border-t border-gray-100">
-        <div class="grid grid-cols-2 gap-2">
-            <a href="${telHref}" ${!telefono ? 'style="pointer-events: none; opacity: 0.5;"' : ''} class="col-span-1 bg-white text-gray-700 border border-gray-200 font-bold py-2.5 rounded-xl text-center text-sm hover:bg-gray-50 flex items-center justify-center gap-1.5 transition-colors">
-                <span class="material-symbols-outlined !text-base">call</span> Llamar
-            </a>
-            <a href="${waHref}" ${!whatsapp ? 'style="pointer-events: none; opacity: 0.5;"' : ''} target="_blank" rel="noopener noreferrer" class="col-span-1 bg-white text-gray-700 border border-gray-200 font-bold py-2.5 rounded-xl text-center text-sm hover:bg-gray-50 flex items-center justify-center gap-1.5 transition-colors">
-                <span class="material-symbols-outlined !text-base">chat</span> WhatsApp
-            </a>
-        </div>
-        <button class="w-full bg-orange-50 text-orange-600 font-bold py-3 rounded-xl mt-2 text-center flex items-center justify-center gap-2 hover:bg-orange-100 transition-colors text-sm" data-navigate="view-profile">
-            Ver Perfil
-        </button>
-      </div>
-    `;
-
-    const navigateBtn = card.querySelector('[data-navigate]');
-    if (navigateBtn) {
-      navigateBtn.addEventListener('click', () => {
-        const navigateTo = window.navigateTo;
-        if (navigateTo) navigateTo('view-profile');
-      });
-    }
-
+    const card = createBusinessCard(negocio);
     container.appendChild(card);
   });
 }
