@@ -51,7 +51,7 @@ export default async function handler(req, res) {
     
     const { data, error } = await supabase.rpc('match_productos', {
       query_embedding: vector,
-      match_threshold: 0.3,
+      match_threshold: 0.6,
       match_count: 10
     });
 
