@@ -1,7 +1,7 @@
 import './style.css';
 import { navigateTo, goBack } from './utils/navigation.js';
 import { getSearchTerm, updateSearchInputs, clearResults, showLoadingState, showNoResults, renderSkeletonLoader } from './utils/dom.js';
-import { searchProductos, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
+import { searchProductos, searchProductosSemantic, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
 import { renderProductos, renderNegocios, createBusinessCard } from './components/renderer.js';
 
 // Exponer funciones globalmente para onclick handlers en HTML
@@ -12,8 +12,11 @@ window.searchByCategory = searchByCategory;
 window.handleSearchKeyUp = handleSearchKeyUp;
 
 /**
- * Maneja la búsqueda principal con búsqueda independiente de productos y negocios,
- * mostrando resultados mixtos de forma inteligente.
+ * Maneja la búsqueda principal con estrategia de "Rescate Explícito":
+ * 
+ * Fase 1 (Literal): Búsquedas rápidas sin IA
+ * Fase 2 (Rescate): Solo si Fase 1 encuentra 0 resultados, activa IA
+ * Fase 3 (Sin resultados): Si ambas fases fallan
  */
 async function performSearch() {
   const searchTerm = getSearchTerm();
@@ -26,33 +29,26 @@ async function performSearch() {
   // Sincronizar inputs
   updateSearchInputs(searchTerm);
 
-  // Limpiar mensajes y contenedores
+  // Limpiar y mostrar skeleton
   clearResults();
   showLoadingState();
   navigateTo('view-results-product');
   renderSkeletonLoader();
 
   try {
-    // PASO 1: Buscar Productos (de forma independiente)
-    console.log('🔍 Buscando productos para:', searchTerm);
-    const productos = await searchProductos(searchTerm);
-    console.log('✅ Productos encontrados:', productos?.length || 0);
+    console.log(`🔍 FASE 1 (Literal): Buscando "${searchTerm}"...`);
 
-    // PASO 2: Buscar Negocios (en paralelo y de múltiples formas)
-    console.log('🏪 Buscando negocios...');
-    
-    // 2a) Búsqueda directa por rubro
-    const negociosPorRubroDirecto = await searchNegociosByRubro(searchTerm);
-    
-    // 2b) Búsqueda por palabras clave asociadas
-    const rubrosAsociados = await searchPalabrasClave(searchTerm);
-    let negociosFromKeywords = [];
-    if (Array.isArray(rubrosAsociados) && rubrosAsociados.length > 0) {
-      negociosFromKeywords = await searchNegociosByRubro(rubrosAsociados);
-    }
-    
-    // 2c) Búsqueda por nombre de negocio
-    const negociosPorNombre = await searchNegociosByNombre(searchTerm);
+    // ==================== FASE 1: BÚSQUEDA LITERAL ====================
+    // Ejecutar en paralelo: productos y negocios (por rubro y por nombre)
+    const [productos, negociosPorRubro, negociosPorNombre] = await Promise.all([
+      searchProductos(searchTerm),
+      searchNegociosByRubro(searchTerm),
+      searchNegociosByNombre(searchTerm)
+    ]);
+
+    console.log(`  📦 Productos encontrados: ${productos?.length || 0}`);
+    console.log(`  🏪 Negocios por rubro: ${negociosPorRubro?.length || 0}`);
+    console.log(`  🏢 Negocios por nombre: ${negociosPorNombre?.length || 0}`);
 
     // Combinar negocios sin duplicados
     const negociosDirectos = [];
@@ -69,92 +65,113 @@ async function performSearch() {
       });
     }
 
-    addNegocios(negociosPorRubroDirecto);
-    addNegocios(negociosFromKeywords);
+    addNegocios(negociosPorRubro);
     addNegocios(negociosPorNombre);
 
-    console.log('✅ Negocios encontrados:', negociosDirectos.length);
+    // Evaluación Fase 1: ¿hay CUALQUIER resultado?
+    const totalFase1 = (productos?.length || 0) + (negociosDirectos.length || 0);
 
-    // PASO 3: Lógica de Renderizado (según disponibilidad de resultados)
+    if (totalFase1 > 0) {
+      console.log(`✅ FASE 1 EXITOSA: ${totalFase1} resultado(s) encontrado(s). Renderizando...`);
 
-    // Caso A: Hay productos
-    if (productos && productos.length > 0) {
-      console.log('📦 Renderizando productos...');
-      renderProductos(productos);
+      // Caso A: Hay productos
+      if (productos && productos.length > 0) {
+        console.log('  → Renderizando productos');
+        renderProductos(productos);
 
-      // Si hay negocios directos, mostrarlos como sugerencias debajo
-      if (negociosDirectos.length > 0) {
-        console.log('🏢 Agregando negocios como sugerencias...');
-        const productsContainer = document.getElementById('products-container');
-        if (productsContainer) {
-          const separator = document.createElement('div');
-          separator.className = 'mt-6 text-center text-gray-500 font-medium';
-          separator.textContent = 'También podrías encontrarlo en estos locales:';
-          productsContainer.appendChild(separator);
+        // Si hay negocios directos, mostrarlos como sugerencias
+        if (negociosDirectos.length > 0) {
+          console.log('  → Agregando negocios como sugerencias');
+          const productsContainer = document.getElementById('products-container');
+          if (productsContainer) {
+            const separator = document.createElement('div');
+            separator.className = 'mt-6 text-center text-gray-500 font-medium';
+            separator.textContent = 'También podrías encontrarlo en estos locales:';
+            productsContainer.appendChild(separator);
 
-          const sugGrid = document.createElement('div');
-          sugGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4';
+            const sugGrid = document.createElement('div');
+            sugGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4';
 
-          negociosDirectos.forEach(negocio => {
-            const card = createBusinessCard(negocio);
-            sugGrid.appendChild(card);
-          });
-
-          productsContainer.appendChild(sugGrid);
-        }
-      }
-
-      navigateTo('view-results-product');
-      return;
-    }
-
-    // Caso B: No hay productos, pero sí negocios
-    if (negociosDirectos.length > 0) {
-      console.log('📋 Sin productos, mostrando solo negocios...');
-      
-      // Si hay pocos negocios, intentar enriquecerlos con búsqueda semántica
-      if (negociosDirectos.length < 3) {
-        try {
-          console.log('🤖 Intentando búsqueda semántica para negocios...');
-          const semanticResults = await searchSemantic(searchTerm);
-          if (Array.isArray(semanticResults) && semanticResults.length > 0) {
-            semanticResults.forEach(n => {
-              const key = n.id ?? n.google_place_id ?? JSON.stringify(n);
-              if (!seenNegocios.has(key)) {
-                seenNegocios.add(key);
-                negociosDirectos.push(n);
-              }
+            negociosDirectos.forEach(negocio => {
+              const card = createBusinessCard(negocio);
+              sugGrid.appendChild(card);
             });
-            console.log('✨ Enriquecidos con semántica, total:', negociosDirectos.length);
+
+            productsContainer.appendChild(sugGrid);
           }
-        } catch (semErr) {
-          console.warn('⚠️ Error en búsqueda semántica de negocios:', semErr);
         }
-      }
 
-      renderNegocios(negociosDirectos);
-      navigateTo('view-results-business');
-      return;
-    }
-
-    // Caso C: No hay productos ni negocios directos, intentar búsqueda semántica de productos
-    console.log('🤖 Sin resultados directos, intentando búsqueda semántica de productos...');
-    try {
-      // Esta función ya intenta buscar semántica de productos si tiene < 3 resultados
-      // Pero aquí ejecutamos manualmente por si acaso
-      const semanticProductos = await searchProductos(searchTerm); // Ya internamente intenta semántica
-      if (semanticProductos && semanticProductos.length > 0) {
-        console.log('✨ Productos por semántica:', semanticProductos.length);
-        renderProductos(semanticProductos);
         navigateTo('view-results-product');
         return;
       }
-    } catch (semErr) {
-      console.warn('⚠️ Error en búsqueda semántica de productos:', semErr);
+
+      // Caso B: No hay productos, pero sí negocios
+      if (negociosDirectos.length > 0) {
+        console.log('  → Mostrando solo negocios');
+        renderNegocios(negociosDirectos);
+        navigateTo('view-results-business');
+        return;
+      }
     }
 
-    // Caso D: Sin resultados en ningún nivel
-    console.log('❌ Sin resultados para:', searchTerm);
+    // ==================== FASE 2: RESCATE CON IA ====================
+    console.log(`❌ FASE 1 SIN RESULTADOS (0/0). Activando FASE 2 (Rescate con IA)...`);
+
+    const [productosSemanticos, negociosSemanticos] = await Promise.all([
+      searchProductosSemantic(searchTerm),
+      searchSemantic(searchTerm)
+    ]);
+
+    console.log(`  ✨ Productos semánticos encontrados: ${productosSemanticos?.length || 0}`);
+    console.log(`  ✨ Negocios semánticos encontrados: ${negociosSemanticos?.length || 0}`);
+
+    const totalFase2 = (productosSemanticos?.length || 0) + (negociosSemanticos?.length || 0);
+
+    if (totalFase2 > 0) {
+      console.log(`✅ FASE 2 EXITOSA: ${totalFase2} resultado(s) encontrado(s) por IA. Renderizando...`);
+
+      // Mostrar productos semánticos si existen
+      if (productosSemanticos && productosSemanticos.length > 0) {
+        console.log('  → Renderizando productos semánticos');
+        renderProductos(productosSemanticos);
+
+        // Si hay negocios semánticos, mostrarlos como sugerencias
+        if (negociosSemanticos && negociosSemanticos.length > 0) {
+          console.log('  → Agregando negocios semánticos como sugerencias');
+          const productsContainer = document.getElementById('products-container');
+          if (productsContainer) {
+            const separator = document.createElement('div');
+            separator.className = 'mt-6 text-center text-gray-500 font-medium';
+            separator.textContent = 'También podrías encontrarlo en estos locales:';
+            productsContainer.appendChild(separator);
+
+            const sugGrid = document.createElement('div');
+            sugGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4';
+
+            negociosSemanticos.forEach(negocio => {
+              const card = createBusinessCard(negocio);
+              sugGrid.appendChild(card);
+            });
+
+            productsContainer.appendChild(sugGrid);
+          }
+        }
+
+        navigateTo('view-results-product');
+        return;
+      }
+
+      // Si solo hay negocios semánticos
+      if (negociosSemanticos && negociosSemanticos.length > 0) {
+        console.log('  → Mostrando solo negocios semánticos');
+        renderNegocios(negociosSemanticos);
+        navigateTo('view-results-business');
+        return;
+      }
+    }
+
+    // ==================== FASE 3: SIN RESULTADOS ====================
+    console.log(`❌ FASE 2 SIN RESULTADOS. Sin resultados en ningún nivel.`);
     showNoResults(searchTerm);
     navigateTo('view-results-product');
 

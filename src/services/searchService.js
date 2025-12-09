@@ -1,14 +1,15 @@
 import { supabase } from '../api/supabase.js';
 
 /**
- * Busca productos por título (híbrida: texto + semántica si es necesario)
+ * Busca productos por título (búsqueda de texto pura y rápida)
+ * NOTA: Esta función SOLO hace búsqueda literal. No usa IA.
  */
 export async function searchProductos(term) {
   try {
     // Sanitizar: eliminar puntos que teclados móviles insertan automáticamente
     const original = String(term || '').trim().replace(/[.]/g, '');
 
-    // PASO 1: Búsqueda por texto (ilike + plurales)
+    // Búsqueda por texto (ilike + plurales)
     let query = supabase
       .from('productos')
       .select('*, negocios(id, rubro, nombre, google_place_id)');
@@ -27,44 +28,31 @@ export async function searchProductos(term) {
     
     if (error) throw error;
 
-    // PASO 2: Evaluar si necesitamos búsqueda semántica
-    let allResults = textResults || [];
-    
-    if (!allResults || allResults.length < 3) {
-      try {
-        console.log(`📊 Resultados de texto: ${allResults.length} (< 3), activando búsqueda semántica...`);
-        const semanticResp = await fetch(`/api/search-semantic-products?term=${encodeURIComponent(original)}`);
-        
-        if (semanticResp.ok) {
-          const semanticData = await semanticResp.json();
-          const semanticResults = semanticData.results || [];
-          
-          console.log(`✨ Resultados semánticos: ${semanticResults.length}`);
-          
-          // PASO 3: Fusión con deduplicación por ID
-          if (semanticResults.length > 0) {
-            const seenIds = new Set(allResults.map(p => p.id));
-            
-            semanticResults.forEach(semProduct => {
-              if (!seenIds.has(semProduct.id)) {
-                seenIds.add(semProduct.id);
-                allResults.push(semProduct);
-              }
-            });
-            
-            console.log(`🔗 Fusión completa: ${allResults.length} productos totales`);
-          }
-        }
-      } catch (semanticErr) {
-        console.warn('⚠️ Error en búsqueda semántica de productos:', semanticErr);
-        // Continuar con resultados de texto si la semántica falla
-      }
-    }
-
-    return allResults;
+    return textResults || [];
   } catch (error) {
     console.error('Error buscando productos:', error);
-    return null;
+    return [];
+  }
+}
+
+/**
+ * Busca productos usando semántica (IA con embeddings)
+ * NOTA: Esta función SOLO se llama cuando la búsqueda literal falla
+ */
+export async function searchProductosSemantic(term) {
+  try {
+    const semanticResp = await fetch(`/api/search-semantic-products?term=${encodeURIComponent(term)}`);
+    
+    if (!semanticResp.ok) {
+      console.warn('searchProductosSemantic fetch failed');
+      return [];
+    }
+
+    const semanticData = await semanticResp.json();
+    return semanticData.results || [];
+  } catch (error) {
+    console.error('Error en searchProductosSemantic:', error);
+    return [];
   }
 }
 
