@@ -12,6 +12,36 @@ window.searchByCategory = searchByCategory;
 window.handleSearchKeyUp = handleSearchKeyUp;
 
 /**
+ * Filtra resultados semánticos por relevancia adaptativa
+ * Estrategia: Usar similitud para decidir cuántos resultados mostrar
+ * @param {Array} results Array de objetos con propiedad 'similarity'
+ * @returns {Array} Resultados filtrados por relevancia
+ */
+function filterByRelevance(results) {
+  if (!results || results.length === 0) return [];
+  
+  // Asegurar orden por similitud (descendente)
+  results.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+  const bestScore = results[0].similarity || 0;
+
+  console.log(`📊 Filtrado de relevancia: mejor score = ${bestScore.toFixed(3)}`);
+
+  // ESTRATEGIA ADAPTATIVA
+
+  // Caso A: Coincidencia Alta (ej: Typos o términos exactos)
+  // Si el mejor es > 0.6, cortamos la cola de resultados mediocres para evitar ruido
+  if (bestScore > 0.6) {
+    console.log('  → Modo ALTA RELEVANCIA: filtrando scores < 0.5');
+    return results.filter(r => r.similarity > 0.5);
+  }
+
+  // Caso B: Coincidencia Media (ej: Conceptos abstractos como "tengo hambre")
+  // Somos más flexibles, pero limitamos a los top 3-4 para no mostrar disparates
+  console.log('  → Modo RELEVANCIA MEDIA: tomando top 3-4 resultados');
+  return results.slice(0, 4);
+}
+
+/**
  * Maneja la búsqueda principal con estrategia de "Rescate Explícito":
  * 
  * Fase 1 (Literal): Búsquedas rápidas sin IA
@@ -122,21 +152,28 @@ async function performSearch() {
       searchSemantic(searchTerm)
     ]);
 
-    console.log(`  ✨ Productos semánticos encontrados: ${productosSemanticos?.length || 0}`);
-    console.log(`  ✨ Negocios semánticos encontrados: ${negociosSemanticos?.length || 0}`);
+    console.log(`  ✨ Productos semánticos crudos: ${productosSemanticos?.length || 0}`);
+    console.log(`  ✨ Negocios semánticos crudos: ${negociosSemanticos?.length || 0}`);
 
-    const totalFase2 = (productosSemanticos?.length || 0) + (negociosSemanticos?.length || 0);
+    // Aplicar filtrado de relevancia adaptativa
+    const productosFiltrados = filterByRelevance(productosSemanticos);
+    const negociosFiltrados = filterByRelevance(negociosSemanticos);
+
+    console.log(`  🔽 Productos filtrados: ${productosFiltrados.length}`);
+    console.log(`  🔽 Negocios filtrados: ${negociosFiltrados.length}`);
+
+    const totalFase2 = (productosFiltrados?.length || 0) + (negociosFiltrados?.length || 0);
 
     if (totalFase2 > 0) {
-      console.log(`✅ FASE 2 EXITOSA: ${totalFase2} resultado(s) encontrado(s) por IA. Renderizando...`);
+      console.log(`✅ FASE 2 EXITOSA: ${totalFase2} resultado(s) relevante(s) encontrado(s) por IA. Renderizando...`);
 
       // Mostrar productos semánticos si existen
-      if (productosSemanticos && productosSemanticos.length > 0) {
+      if (productosFiltrados && productosFiltrados.length > 0) {
         console.log('  → Renderizando productos semánticos');
-        renderProductos(productosSemanticos);
+        renderProductos(productosFiltrados);
 
         // Si hay negocios semánticos, mostrarlos como sugerencias
-        if (negociosSemanticos && negociosSemanticos.length > 0) {
+        if (negociosFiltrados && negociosFiltrados.length > 0) {
           console.log('  → Agregando negocios semánticos como sugerencias');
           const productsContainer = document.getElementById('products-container');
           if (productsContainer) {
@@ -148,7 +185,7 @@ async function performSearch() {
             const sugGrid = document.createElement('div');
             sugGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4';
 
-            negociosSemanticos.forEach(negocio => {
+            negociosFiltrados.forEach(negocio => {
               const card = createBusinessCard(negocio);
               sugGrid.appendChild(card);
             });
@@ -162,9 +199,9 @@ async function performSearch() {
       }
 
       // Si solo hay negocios semánticos
-      if (negociosSemanticos && negociosSemanticos.length > 0) {
+      if (negociosFiltrados && negociosFiltrados.length > 0) {
         console.log('  → Mostrando solo negocios semánticos');
-        renderNegocios(negociosSemanticos);
+        renderNegocios(negociosFiltrados);
         navigateTo('view-results-business');
         return;
       }

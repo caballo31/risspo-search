@@ -53,7 +53,7 @@ export default async function handler(req, res) {
     
     const { data, error } = await supabase.rpc('match_negocios', {
       query_embedding: vector,
-      match_threshold: 0.35, // Umbral calibrado
+      match_threshold: 0.3, // Umbral bajo para capturar candidatos amplios, filtrado en frontend
       match_count: 10
     });
 
