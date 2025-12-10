@@ -1,21 +1,4 @@
 import { supabase } from '../api/supabase.js';
-import { pipeline } from '@xenova/transformers';
-
-// Singleton para el modelo de embeddings
-let embeddingPipeline = null;
-
-async function getEmbeddingPipeline() {
-  if (!embeddingPipeline) {
-    embeddingPipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-  }
-  return embeddingPipeline;
-}
-
-async function generateEmbedding(text) {
-  const pipe = await getEmbeddingPipeline();
-  const output = await pipe(text, { pooling: 'mean', normalize: true });
-  return Array.from(output.data);
-}
 
 // =====================================================================
 // PASO 1: BÚSQUEDA DE NEGOCIO (Prioridad Máxima)
@@ -105,27 +88,39 @@ export async function detectarContextoDeRubros(termino) {
       });
     }
 
-    // 3. Búsqueda Semántica en Rubros (Embedding)
+    // 3. Búsqueda Semántica (API)
     try {
-      const embedding = await generateEmbedding(termino);
-      // Asumimos que existe una función RPC 'match_rubros' para buscar en la tabla rubros
-      const { data: rubrosSemanticos, error } = await supabase.rpc('match_rubros', {
-        query_embedding: embedding,
-        match_threshold: 0.6,
-        match_count: 5
-      });
-
-      if (!error && rubrosSemanticos?.length) {
-        rubrosSemanticos.forEach(r => {
-          if (!resultadosMap.has(r.id)) {
-            resultadosMap.set(r.id, { 
-              id: r.id, 
-              nombre: r.nombre, 
-              score: r.similarity, 
-              tipo: 'semantico' 
-            });
-          }
-        });
+      const semanticResp = await fetch(`/api/search-semantic?term=${encodeURIComponent(termino)}`);
+      if (semanticResp.ok) {
+        const semanticData = await semanticResp.json();
+        
+        if (semanticData.results && semanticData.results.length > 0) {
+           // Extraer rubro_id de los resultados (asumiendo que son negocios o rubros)
+           const rubroIds = semanticData.results
+             .filter(r => r.rubro_id)
+             .map(r => r.rubro_id);
+             
+           if (rubroIds.length > 0) {
+             // Fetch rubro details for these IDs
+             const { data: rubrosSem } = await supabase
+               .from('rubros')
+               .select('id, nombre')
+               .in('id', rubroIds);
+               
+             if (rubrosSem) {
+               rubrosSem.forEach(r => {
+                 if (!resultadosMap.has(r.id)) {
+                   resultadosMap.set(r.id, {
+                     id: r.id,
+                     nombre: r.nombre,
+                     score: 0.7,
+                     tipo: 'semantico'
+                   });
+                 }
+               });
+             }
+           }
+        }
       }
     } catch (semError) {
       console.warn('⚠️ Búsqueda semántica no disponible o falló:', semError);
@@ -177,14 +172,12 @@ export async function obtenerNegociosPorRubro(contextoRubros) {
 }
 
 // ==========================================
-// 3. RECUPERACIÓN DE PRODUCTOS (POR ID DE NEGOCIO)
+// 4. RECUPERACIÓN DE PRODUCTOS (POR ID DE NEGOCIO)
 // ==========================================
 
-export async function obtenerProductosPorRubro(termino, contextoRubros) {
-  if (!contextoRubros?.length) return [];
+export async function obtenerProductosDeNegocios(termino, negocios) {
+  if (!negocios?.length) return [];
 
-  // Paso intermedio: Obtener IDs de negocios relevantes
-  const negocios = await obtenerNegociosPorRubro(contextoRubros);
   const negocioIds = negocios.map(n => n.id);
 
   if (negocioIds.length === 0) return [];
@@ -205,6 +198,9 @@ export async function obtenerProductosPorRubro(termino, contextoRubros) {
 
   return data || [];
 }
+
+// Alias para compatibilidad temporal
+export const obtenerProductosPorRubro = obtenerProductosDeNegocios;
 
 /**
  * Obtiene TODOS los productos de un contexto de rubros (para exploración)

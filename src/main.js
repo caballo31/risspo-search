@@ -2,7 +2,7 @@ import './style.css';
 import { navigateTo, goBack } from './utils/navigation.js';
 import { getSearchTerm, updateSearchInputs, clearResults, showLoadingState, showNoResults, renderSkeletonLoader } from './utils/dom.js';
 import { supabase } from './api/supabase.js';
-import { buscarNegocioDirecto, detectarContextoDeRubros, obtenerNegociosPorRubro, obtenerProductosPorRubro, obtenerTodosProductosDelRubro, searchProductos, searchProductosSemantic, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
+import { buscarNegocioDirecto, detectarContextoDeRubros, obtenerNegociosPorRubro, obtenerProductosDeNegocios, obtenerTodosProductosDelRubro, searchProductos, searchProductosSemantic, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
 import { renderProductos, renderNegocios, createBusinessCard } from './components/renderer.js';
 
 // Exponer funciones globalmente para onclick handlers en HTML
@@ -121,7 +121,8 @@ async function performSearch() {
     console.log(`  → Negocios encontrados: ${negociosDelContexto.length}`);
 
     // Obtener productos del contexto (ya ordenados por prioridad de rubro)
-    const productosDelContexto = await obtenerProductosPorRubro(searchTerm, contextoDatos);
+    // OPTIMIZACIÓN: Pasamos los negocios ya encontrados para evitar re-fetching
+    const productosDelContexto = await obtenerProductosDeNegocios(searchTerm, negociosDelContexto);
     console.log(`  → Productos encontrados: ${productosDelContexto.length}\n`);
 
     // ==================== PRESENTACIÓN DE RESULTADOS ====================
