@@ -129,7 +129,7 @@ async function performSearch() {
 
     if (productosDelContexto.length > 0) {
       console.log(`  → Renderizando ${productosDelContexto.length} producto(s) del contexto`);
-      console.log(`     (Ordenados por prioridad de rubro: ${contextoDatos.join(' > ')})\n`);
+      console.log(`     (Ordenados por prioridad de rubro: ${contextoDatos.map(c => c.nombre).join(' > ')})\n`);
       
       renderProductos(productosDelContexto);
 
@@ -170,7 +170,7 @@ async function performSearch() {
     }
 
     // Sin productos ni negocios
-    console.log(`\n❌ Sin productos ni negocios en contexto [${contextoDatos.join(', ')}]`);
+    console.log(`\n❌ Sin productos ni negocios en contexto [${contextoDatos.map(c => c.nombre).join(', ')}]`);
     showNoResults(searchTerm);
     navigateTo('view-results-product');
 

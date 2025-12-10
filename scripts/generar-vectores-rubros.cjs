@@ -6,47 +6,75 @@ const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABAS
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 async function generarEmbeddingsRubros() {
-  console.log("🚀 Iniciando vectorización de RUBROS...");
+  console.log("🚀 Iniciando vectorización MEJORADA de RUBROS...");
 
-  // 1. Traer rubros sin vector
-  const { data: rubros, error } = await supabase
+  // 1. Traer rubros que necesitan vector (o todos si acabas de limpiar)
+  const { data: rubros, error: errRubros } = await supabase
     .from('rubros')
-    .select('*')
+    .select('id, nombre')
     .is('embedding', null);
 
-  if (error) return console.error("Error DB:", error);
-  if (!rubros.length) return console.log("✅ Todos los rubros ya tienen vector.");
+  if (errRubros) return console.error("❌ Error DB Rubros:", errRubros.message);
+  if (!rubros || rubros.length === 0) return console.log("✅ Todos los rubros ya tienen vector.");
 
-  // 2. Traer keywords para contexto
-  const { data: keywords } = await supabase.from('palabras_clave').select('*');
-  
+  console.log(`📦 Procesando ${rubros.length} rubros...`);
+
+  // 2. Traer TODAS las keywords con su relación por ID
+  // Ahora usamos 'rubro_id' que es mucho más seguro que el texto
+  const { data: keywords, error: errKeys } = await supabase
+    .from('palabras_clave')
+    .select('keyword, rubro_id');
+
+  if (errKeys) return console.error("❌ Error DB Keywords:", errKeys.message);
+
+  // Crear un mapa para acceso rápido: rubro_id -> [keyword1, keyword2...]
+  const keywordsMap = {};
+  keywords.forEach(k => {
+    if (k.rubro_id) {
+      if (!keywordsMap[k.rubro_id]) keywordsMap[k.rubro_id] = [];
+      keywordsMap[k.rubro_id].push(k.keyword);
+    }
+  });
+
+  let procesados = 0;
+
   for (const r of rubros) {
     try {
-      // Unimos el rubro con sus keywords para darle contexto al vector
-      // Ej: Rubro "Ferretería" + Keywords "martillo clavo herramientas"
-      const associatedKeywords = keywords
-        .filter(k => k.rubro_asociado.toLowerCase() === r.nombre.toLowerCase())
-        .map(k => k.keyword)
-        .join(' ');
+      // 3. Construir el contexto enriquecido
+      // Buscamos las keywords usando el ID exacto del rubro
+      const misKeywords = keywordsMap[r.id] || [];
+      const keywordsString = misKeywords.join(', ');
 
-      const textoParaIA = `Rubro Comercial: ${r.nombre}. Conceptos relacionados: ${associatedKeywords}`;
-      console.log(`✨ Procesando: ${r.nombre}`);
+      // Prompt enriquecido para la IA: Define qué es el rubro y qué abarca
+      const textoParaIA = `
+        Rubro Comercial: ${r.nombre}
+        Definición: Establecimiento dedicado a la venta de productos o servicios de la categoría ${r.nombre}.
+        Palabras clave y sinónimos asociados: ${keywordsString}
+      `.replace(/\s+/g, ' ').trim();
 
+      console.log(`✨ [${r.id}] ${r.nombre} -> ${misKeywords.length} keywords`);
+
+      // 4. Generar Vector
       const response = await openai.embeddings.create({
         model: "text-embedding-3-small",
         input: textoParaIA,
       });
 
-      await supabase
+      // 5. Guardar
+      const { error: updateError } = await supabase
         .from('rubros')
         .update({ embedding: response.data[0].embedding })
         .eq('id', r.id);
+
+      if (updateError) throw updateError;
+      
+      procesados++;
 
     } catch (err) {
       console.error(`❌ Falló ${r.nombre}:`, err.message);
     }
   }
-  console.log("🎉 Rubros vectorizados.");
+  console.log(`🎉 Finalizado. ${procesados} rubros vectorizados con contexto mejorado.`);
 }
 
 generarEmbeddingsRubros();

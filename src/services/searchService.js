@@ -1,4 +1,21 @@
 import { supabase } from '../api/supabase.js';
+import { pipeline } from '@xenova/transformers';
+
+// Singleton para el modelo de embeddings
+let embeddingPipeline = null;
+
+async function getEmbeddingPipeline() {
+  if (!embeddingPipeline) {
+    embeddingPipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+  }
+  return embeddingPipeline;
+}
+
+async function generateEmbedding(text) {
+  const pipe = await getEmbeddingPipeline();
+  const output = await pipe(text, { pooling: 'mean', normalize: true });
+  return Array.from(output.data);
+}
 
 // =====================================================================
 // PASO 1: BÚSQUEDA DE NEGOCIO (Prioridad Máxima)
@@ -42,257 +59,151 @@ export async function buscarNegocioDirecto(term) {
 // =====================================================================
 
 /**
- * Detecta un CONTEXTO de rubros relacionados con el término
- * Devuelve un array de rubros ordenados por prioridad
- * 
- * Estrategia de 2 Círculos:
- * - NÚCLEO (Prioridad 1): Match exacto de rubro o keyword
- * - PERIFERIA (Prioridad 2): Rubros relacionados encontrados vía búsqueda semántica
- * 
- * @param {string} term Término de búsqueda
- * @returns {Array} Array de strings con rubros válidos, o null si no se detectan
+ * Detecta el contexto de rubros basado en el término de búsqueda.
+ * Retorna un array de objetos rubro: [{ id, nombre, score, tipo }]
+ * Prioridad:
+ * 1. Match Exacto (Nombre de Rubro)
+ * 2. Match Keyword (Palabra Clave -> Rubro)
+ * 3. Match Semántico (Embedding -> Rubro)
  */
-export async function detectarContextoDeRubros(term) {
-  try {
-    const termClean = String(term || '').trim().toLowerCase();
-    
-    console.log(`\n🔄 PASO 2: Detectando Contexto de Rubros para "${term}"...`);
+export async function detectarContextoDeRubros(termino) {
+  const terminoNorm = termino.toLowerCase().trim();
+  const resultadosMap = new Map(); // Map<id, {id, nombre, score, tipo}>
 
-    // Set para almacenar rubros únicos (evitar duplicados)
-    const rubrosSet = new Set();
-    
-    // ========== NÚCLEO (Prioridad 1) ==========
-    console.log('  ⭐ NÚCLEO (Prioridad 1):');
-    
-    // Método A: Match exacto en tabla rubros
-    console.log('    → Método A: Match exacto en rubros...');
-    const { data: rubrosExactos, error: errExacto } = await supabase
+  console.log(`🔍 Detectando contexto para: "${termino}"`);
+
+  try {
+    // 1. Búsqueda Exacta en Rubros (Nombre)
+    const { data: rubrosExactos } = await supabase
       .from('rubros')
-      .select('*')
-      .ilike('nombre', `%${termClean}%`)
-      .limit(5);
+      .select('id, nombre')
+      .ilike('nombre', terminoNorm);
 
-    if (!errExacto && rubrosExactos && rubrosExactos.length > 0) {
-      rubrosExactos.forEach(rubro => {
-        rubrosSet.add(rubro.nombre);
-        console.log(`      ✅ Rubro exacto: "${rubro.nombre}"`);
+    if (rubrosExactos?.length) {
+      rubrosExactos.forEach(r => {
+        resultadosMap.set(r.id, { ...r, score: 1.0, tipo: 'exacto' });
       });
     }
 
-    // Método B: Palabras clave
-    console.log('    → Método B: Búsqueda en palabras_clave...');
-    const { data: keywordMatch, error: errKeyword } = await supabase
-      .rpc('buscar_keywords', { busqueda: termClean });
+    // 2. Búsqueda por Palabras Clave (Relación FK)
+    // Buscamos en palabras_clave y obtenemos el rubro asociado
+    const { data: keywords } = await supabase
+      .from('palabras_clave')
+      .select('rubro_id, keyword, rubros ( id, nombre )')
+      .ilike('keyword', terminoNorm);
 
-    if (!errKeyword && keywordMatch && keywordMatch.length > 0) {
-      keywordMatch.forEach(match => {
-        if (match.rubro_asociado) {
-          rubrosSet.add(match.rubro_asociado);
-          console.log(`      ✅ Rubro de keyword: "${match.rubro_asociado}"`);
+    if (keywords?.length) {
+      keywords.forEach(k => {
+        if (k.rubros && !resultadosMap.has(k.rubros.id)) {
+          resultadosMap.set(k.rubros.id, { 
+            id: k.rubros.id, 
+            nombre: k.rubros.nombre, 
+            score: 0.95, 
+            tipo: 'keyword' 
+          });
         }
       });
     }
 
-    // ========== PERIFERIA (Prioridad 2) ==========
-    // Siempre ejecutar búsqueda semántica como COMPLEMENTO, no como fallback
-    console.log('  🌍 PERIFERIA (Prioridad 2):');
-    console.log('    → Búsqueda semántica vectorial de negocios relacionados...');
-    
+    // 3. Búsqueda Semántica en Rubros (Embedding)
     try {
-      const semanticResp = await fetch(`/api/search-semantic?term=${encodeURIComponent(term)}`);
-      if (semanticResp.ok) {
-        const semanticData = await semanticResp.json();
-        
-        if (semanticData.results && semanticData.results.length > 0) {
-          const rubrosEncontrados = [];
-          
-          semanticData.results.forEach(negocio => {
-            if (negocio.rubro && negocio.similarity > 0.4) { // Umbral más bajo para periferia
-              if (!rubrosSet.has(negocio.rubro)) {
-                rubrosSet.add(negocio.rubro);
-                rubrosEncontrados.push(negocio.rubro);
-                console.log(`      ✅ Rubro relacionado: "${negocio.rubro}" (similitud: ${negocio.similarity.toFixed(3)})`);
-              }
-            }
-          });
+      const embedding = await generateEmbedding(termino);
+      // Asumimos que existe una función RPC 'match_rubros' para buscar en la tabla rubros
+      const { data: rubrosSemanticos, error } = await supabase.rpc('match_rubros', {
+        query_embedding: embedding,
+        match_threshold: 0.6,
+        match_count: 5
+      });
 
-          if (rubrosEncontrados.length === 0) {
-            console.log(`      ℹ️ No se encontraron rubros relacionados nuevos`);
+      if (!error && rubrosSemanticos?.length) {
+        rubrosSemanticos.forEach(r => {
+          if (!resultadosMap.has(r.id)) {
+            resultadosMap.set(r.id, { 
+              id: r.id, 
+              nombre: r.nombre, 
+              score: r.similarity, 
+              tipo: 'semantico' 
+            });
           }
-        }
+        });
       }
-    } catch (semErr) {
-      console.warn('    ⚠️ Búsqueda semántica falló:', semErr.message);
+    } catch (semError) {
+      console.warn('⚠️ Búsqueda semántica no disponible o falló:', semError);
     }
 
-    // Convertir Set a Array
-    const contextoRubros = Array.from(rubrosSet);
-
-    if (contextoRubros.length === 0) {
-      console.log(`\n❌ PASO 2 FALLIDO: No se detectó contexto de rubros`);
-      return null;
-    }
-
-    console.log(`\n✅ PASO 2 ÉXITO: Contexto de ${contextoRubros.length} rubro(s) detectado: [${contextoRubros.join(', ')}]`);
-    return contextoRubros;
-
-  } catch (error) {
-    console.error('Error en detectarContextoDeRubros:', error);
-    return null;
+  } catch (err) {
+    console.error('Error en detección de contexto:', err);
   }
+
+  // Convertir a array y ordenar
+  return Array.from(resultadosMap.values()).sort((a, b) => {
+    const scoreA = getScore(a);
+    const scoreB = getScore(b);
+    return scoreB - scoreA;
+  });
 }
 
-// =====================================================================
-// PASO 3: RECUPERACIÓN DE CONTENIDO (Scopeado al Rubro)
-// =====================================================================
-
-/**
- * Obtiene negocios que pertenecen a un contexto de rubros
- * @param {Array|string} rubros Array de nombres de rubros, o string único
- * @returns {Array} Array de negocios ordenados por rubro de entrada
- */
-export async function obtenerNegociosPorRubro(rubros) {
-  try {
-    // Normalizar entrada: aceptar string o array
-    const rubrosArray = Array.isArray(rubros) 
-      ? rubros 
-      : (rubros && typeof rubros === 'string' ? [rubros] : []);
-
-    if (rubrosArray.length === 0) {
-      console.warn('❌ Rubros inválidos para obtenerNegociosPorRubro');
-      return [];
-    }
-
-    console.log(`\n🏪 Obteniendo negocios de contexto [${rubrosArray.join(', ')}]...`);
-
-    // Usar IN para múltiples rubros
-    const { data, error } = await supabase
-      .from('negocios')
-      .select('*')
-      .in('rubro', rubrosArray);
-
-    if (error) throw error;
-
-    const result = data || [];
-    
-    // Ordenar por prioridad de rubro (primero los de Prioridad 1)
-    const prioridadMap = {};
-    rubrosArray.forEach((r, idx) => {
-      prioridadMap[r] = idx;
-    });
-
-    result.sort((a, b) => (prioridadMap[a.rubro] ?? 999) - (prioridadMap[b.rubro] ?? 999));
-
-    console.log(`  ✅ Negocios encontrados: ${result.length}`);
-    return result;
-  } catch (error) {
-    console.error('Error en obtenerNegociosPorRubro:', error);
-    return [];
-  }
+function getScore(item) {
+  if (item.tipo === 'exacto') return 100;
+  if (item.tipo === 'keyword') return 90;
+  return (item.score || 0) * 10; 
 }
 
-/**
- * Obtiene productos dentro de un contexto de rubros (Multi-rubro)
- * Estrategia: Primero ilike, luego vectorial (filtrado por contexto de rubros)
- * 
- * Ordenamiento:
- * - Productos de rubros de mayor prioridad (Núcleo) aparecen primero
- * - Luego productos de rubros de menor prioridad (Periferia)
- * 
- * @param {string} term Término de búsqueda
- * @param {Array|string} rubros Array de nombres de rubros, o string único
- * @returns {Array} Array de productos ordenados por relevancia de rubro
- */
-export async function obtenerProductosPorRubro(term, rubros) {
-  try {
-    const termClean = String(term || '').trim();
-    
-    // Normalizar entrada: aceptar string o array
-    const rubrosArray = Array.isArray(rubros) 
-      ? rubros 
-      : (rubros && typeof rubros === 'string' ? [rubros] : []);
+// ==========================================
+// 2. RECUPERACIÓN DE NEGOCIOS (POR ID)
+// ==========================================
 
-    if (rubrosArray.length === 0) {
-      console.warn('❌ Rubros inválidos para obtenerProductosPorRubro');
-      return [];
-    }
+export async function obtenerNegociosPorRubro(contextoRubros) {
+  if (!contextoRubros?.length) return [];
 
-    console.log(`\n📦 PASO 3: Buscando productos para "${term}" en contexto [${rubrosArray.join(', ')}]...`);
+  const ids = contextoRubros.map(r => r.id);
+  
+  // Filtrar negocios usando la FK rubro_id
+  const { data, error } = await supabase
+    .from('negocios')
+    .select('*')
+    .in('rubro_id', ids);
 
-    // Crear mapa de prioridades para ordenamiento
-    const prioridadMap = {};
-    rubrosArray.forEach((r, idx) => {
-      prioridadMap[r] = idx;
-    });
-
-    // ========== SUB-PASO A: Búsqueda ilike ==========
-    console.log('  → Sub-paso A: Búsqueda ilike en productos del contexto...');
-    let filters = [`titulo.ilike.%${termClean}%`];
-
-    // Soporte para plurales
-    if (termClean.length > 3 && termClean.endsWith('s')) {
-      const singular = termClean.slice(0, -1);
-      filters.push(`titulo.ilike.%${singular}%`);
-    }
-
-    const { data: productosLiterales, error: errLiteral } = await supabase
-      .from('productos')
-      .select('*, negocios!inner(id, nombre, rubro, google_place_id)')
-      .or(filters.join(','))
-      .in('negocios.rubro', rubrosArray);
-
-    if (errLiteral) throw errLiteral;
-
-    const resultados = productosLiterales || [];
-    console.log(`  ✅ Productos literales encontrados: ${resultados.length}`);
-
-    // ========== SUB-PASO B: Búsqueda Vectorial (Complemento) ==========
-    if (resultados.length < 3) {
-      console.log('  → Sub-paso B: Complementando con búsqueda vectorial...');
-      try {
-        const semanticResp = await fetch(`/api/search-semantic-products?term=${encodeURIComponent(term)}`);
-        
-        if (semanticResp.ok) {
-          const semanticData = await semanticResp.json();
-          const productosSemanticos = semanticData.results || [];
-          
-          console.log(`  ✨ Productos semánticos encontrados: ${productosSemanticos.length}`);
-          
-          // FILTRADO POR CONTEXTO: Solo productos cuyos negocios estén en el contexto
-          const seenIds = new Set(resultados.map(p => p.id));
-          const semanticosFiltrados = productosSemanticos.filter(p => {
-            const esDelContexto = p.negocios && rubrosArray.includes(p.negocios.rubro);
-            const noEsDuplicado = !seenIds.has(p.id);
-            
-            if (!esDelContexto && p.negocios) {
-              console.log(`    🚫 Descartado: "${p.titulo}" (rubro: ${p.negocios.rubro}), fuera del contexto [${rubrosArray.join(', ')}]`);
-            }
-            
-            return esDelContexto && noEsDuplicado;
-          });
-          
-          resultados.push(...semanticosFiltrados);
-          console.log(`  🔗 Después de fusión: ${resultados.length} productos totales`);
-        }
-      } catch (semErr) {
-        console.warn('  ⚠️ Sub-paso B falló:', semErr.message);
-      }
-    }
-
-    // ========== ORDENAMIENTO POR PRIORIDAD DE RUBRO ==========
-    resultados.sort((a, b) => {
-      const prioA = prioridadMap[a.negocios?.rubro] ?? 999;
-      const prioB = prioridadMap[b.negocios?.rubro] ?? 999;
-      return prioA - prioB;
-    });
-
-    console.log(`  🎯 Productos ordenados por prioridad de rubro`);
-
-    return resultados;
-  } catch (error) {
-    console.error('Error en obtenerProductosPorRubro:', error);
+  if (error) {
+    console.error('Error obteniendo negocios:', error);
     return [];
   }
+
+  // Ordenar negocios según la prioridad del rubro
+  const ordenRubros = new Map(ids.map((id, i) => [id, i]));
+  return data.sort((a, b) => {
+    return (ordenRubros.get(a.rubro_id) || 999) - (ordenRubros.get(b.rubro_id) || 999);
+  });
+}
+
+// ==========================================
+// 3. RECUPERACIÓN DE PRODUCTOS (POR ID DE NEGOCIO)
+// ==========================================
+
+export async function obtenerProductosPorRubro(termino, contextoRubros) {
+  if (!contextoRubros?.length) return [];
+
+  // Paso intermedio: Obtener IDs de negocios relevantes
+  const negocios = await obtenerNegociosPorRubro(contextoRubros);
+  const negocioIds = negocios.map(n => n.id);
+
+  if (negocioIds.length === 0) return [];
+
+  // Buscar productos en esos negocios que coincidan con el término
+  // Usamos búsqueda de texto simple sobre el subset de negocios
+  const { data, error } = await supabase
+    .from('productos')
+    .select('*, negocios (nombre, rubro_id)') 
+    .in('negocio_id', negocioIds)
+    .or(`titulo.ilike.%${termino}%,descripcion.ilike.%${termino}%`)
+    .limit(50);
+
+  if (error) {
+    console.error('Error obteniendo productos:', error);
+    return [];
+  }
+
+  return data || [];
 }
 
 /**
