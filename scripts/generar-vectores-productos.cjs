@@ -1,9 +1,8 @@
-// scripts/generar-vectores-productos.cjs
 require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 
-// Usamos tus mismas variables de entorno
+// Configuración de clientes
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY; 
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
@@ -17,10 +16,11 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
 async function generarEmbeddingsProductos() {
-  console.log("🚀 Iniciando vectorización de PRODUCTOS (sin tocar Negocios)...");
+  console.log("🚀 Iniciando vectorización de PRODUCTOS...");
 
-  // 1. Buscamos productos que NO tengan vector todavía
-  // Hacemos JOIN con negocios para tener el contexto completo
+  // 1. Buscamos productos sin vector
+  // MODIFICACIÓN CLAVE: Hacemos un JOIN profundo para traer el nombre del rubro oficial
+  // productos -> negocios -> rubros (nombre)
   const { data: productos, error } = await supabase
     .from('productos')
     .select(`
@@ -29,32 +29,47 @@ async function generarEmbeddingsProductos() {
       descripcion, 
       precio,
       negocio_id,
-      negocios (id, nombre, rubro, direccion)
+      negocios (
+        id, 
+        nombre, 
+        direccion,
+        rubros ( nombre )
+      )
     `)
     .is('embedding', null)
-    .limit(500); // Lotes seguros
+    .limit(500); // Procesamos de a 500 para seguridad
 
-  if (error) return console.error("❌ Error consultando productos:", error.message);
-  if (!productos || productos.length === 0) return console.log("✅ No hay productos pendientes de vectorizar.");
+  if (error) {
+    console.error("❌ Error consultando productos:", error.message);
+    return;
+  }
+
+  if (!productos || productos.length === 0) {
+    console.log("✅ No hay productos pendientes de vectorizar.");
+    return;
+  }
 
   console.log(`📦 Encontrados ${productos.length} productos sin vector.`);
   let procesados = 0;
 
   for (const prod of productos) {
     try {
-      // Manejo de seguridad por si el producto quedó huérfano de negocio
-      const negocio = prod.negocios || { nombre: '', rubro: '', direccion: '' };
+      const negocio = prod.negocios || { nombre: '', direccion: '' };
       
-      // 2. CREACIÓN DEL TEXTO RICO (Contexto Producto + Negocio)
-      // Esto permite buscar "ferretería martillo" y encontrar el producto aunque no diga ferretería
+      // Obtener el nombre del rubro desde la relación (si existe) o usar fallback
+      // Esto arregla el problema de "texto sucio"
+      const nombreRubro = negocio.rubros?.nombre || 'Comercio Local';
+
+      // 2. CREACIÓN DEL CONTEXTO
+      // Este texto es lo que la IA "lee" para entender qué es el producto
       const textoParaIA = `
         Producto: ${prod.titulo}
         Descripción: ${prod.descripcion || ''}
         Precio: ${prod.precio ? '$'+prod.precio : 'Consultar'}
         
         Vendido en: ${negocio.nombre}
-        Rubro del Local: ${negocio.rubro}
-        Ubicación: ${negocio.direccion}
+        Rubro del Local: ${nombreRubro}
+        Ubicación: ${negocio.direccion || 'Chajarí'}
       `.replace(/\s+/g, ' ').trim();
 
       // 3. Generar Vector con OpenAI
@@ -62,9 +77,10 @@ async function generarEmbeddingsProductos() {
         model: "text-embedding-3-small",
         input: textoParaIA,
       });
+      
       const vector = response.data[0].embedding;
 
-      // 4. Guardar SOLO en la tabla productos
+      // 4. Guardar vector en Supabase
       const { error: updateError } = await supabase
         .from('productos')
         .update({ embedding: vector })
@@ -80,7 +96,7 @@ async function generarEmbeddingsProductos() {
     }
   }
 
-  console.log(`\n🎉 ¡Listo! ${procesados} productos vectorizados.`);
+  console.log(`\n🎉 ¡Listo! ${procesados} productos vectorizados con la nueva estructura.`);
 }
 
 generarEmbeddingsProductos();
