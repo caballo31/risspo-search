@@ -16,13 +16,26 @@ export async function buscarNegocioDirecto(term) {
     
     console.log(`\n📍 PASO 1: Buscando negocio directo para "${term}"...`);
 
-    const { data, error } = await supabase
+    // Intento 1: Búsqueda parcial (ilike)
+    let { data, error } = await supabase
       .from('negocios')
       .select('*')
       .ilike('nombre', `%${termClean}%`)
       .limit(1);
 
-    if (error) throw error;
+    if (!data || data.length === 0) {
+      // Intento 2: Búsqueda difusa (Full Text Search) para typos
+      console.log(`   ...Intento 2: Búsqueda difusa (FTS)`);
+      const { data: ftsData, error: ftsError } = await supabase
+        .from('negocios')
+        .select('*')
+        .textSearch('nombre', termClean, { type: 'websearch', config: 'spanish' })
+        .limit(1);
+      
+      if (!ftsError && ftsData && ftsData.length > 0) {
+        data = ftsData;
+      }
+    }
 
     if (data && data.length > 0) {
       console.log(`✅ PASO 1 ÉXITO: Negocio encontrado: "${data[0].nombre}"`);
@@ -56,11 +69,12 @@ export async function detectarContextoDeRubros(termino) {
   console.log(`🔍 Detectando contexto para: "${termino}"`);
 
   try {
-    // 1. Búsqueda Exacta en Rubros (Nombre)
+    // 1. Búsqueda Exacta/Parcial en Rubros (Nombre)
+    // Usamos wildcards para encontrar "Hamburguesería" buscando "hamburguesa"
     const { data: rubrosExactos } = await supabase
       .from('rubros')
       .select('id, nombre')
-      .ilike('nombre', terminoNorm);
+      .ilike('nombre', `%${terminoNorm}%`);
 
     if (rubrosExactos?.length) {
       rubrosExactos.forEach(r => {
@@ -68,12 +82,28 @@ export async function detectarContextoDeRubros(termino) {
       });
     }
 
+    // 1.5 Búsqueda Difusa en Rubros (FTS) para typos como "hamburgesa"
+    if (resultadosMap.size === 0) {
+       const { data: rubrosFTS } = await supabase
+        .from('rubros')
+        .select('id, nombre')
+        .textSearch('nombre', terminoNorm, { type: 'websearch', config: 'spanish' });
+
+       if (rubrosFTS?.length) {
+         rubrosFTS.forEach(r => {
+           if (!resultadosMap.has(r.id)) {
+             resultadosMap.set(r.id, { ...r, score: 0.95, tipo: 'fuzzy' });
+           }
+         });
+       }
+    }
+
     // 2. Búsqueda por Palabras Clave (Relación FK)
     // Buscamos en palabras_clave y obtenemos el rubro asociado
     const { data: keywords } = await supabase
       .from('palabras_clave')
       .select('rubro_id, keyword, rubros ( id, nombre )')
-      .ilike('keyword', terminoNorm);
+      .ilike('keyword', `%${terminoNorm}%`); // También parcial aquí
 
     if (keywords?.length) {
       keywords.forEach(k => {
@@ -81,7 +111,7 @@ export async function detectarContextoDeRubros(termino) {
           resultadosMap.set(k.rubros.id, { 
             id: k.rubros.id, 
             nombre: k.rubros.nombre, 
-            score: 0.95, 
+            score: 0.85, // Bajamos un poco para priorizar el match directo de nombre
             tipo: 'keyword' 
           });
         }
@@ -110,10 +140,14 @@ export async function detectarContextoDeRubros(termino) {
              if (rubrosSem) {
                rubrosSem.forEach(r => {
                  if (!resultadosMap.has(r.id)) {
+                   // Encontrar el score original del resultado semántico si es posible
+                   const originalResult = semanticData.results.find(res => res.rubro_id === r.id);
+                   const similarity = originalResult ? originalResult.similarity : 0.7;
+                   
                    resultadosMap.set(r.id, {
                      id: r.id,
                      nombre: r.nombre,
-                     score: 0.7,
+                     score: similarity, // Usamos similarity directo (0-1)
                      tipo: 'semantico'
                    });
                  }
@@ -140,8 +174,11 @@ export async function detectarContextoDeRubros(termino) {
 
 function getScore(item) {
   if (item.tipo === 'exacto') return 100;
-  if (item.tipo === 'keyword') return 90;
-  return (item.score || 0) * 10; 
+  if (item.tipo === 'fuzzy') return 95;
+  if (item.tipo === 'keyword') return 85;
+  // Semántico suele ser 0.7 - 0.9, lo escalamos para que compita pero quede abajo de exacto/keyword
+  // O si es muy alto (>0.85) podría superar a keyword.
+  return (item.score || 0) * 100; 
 }
 
 // ==========================================
@@ -184,12 +221,27 @@ export async function obtenerProductosDeNegocios(termino, negocios) {
 
   // Buscar productos en esos negocios que coincidan con el término
   // Usamos búsqueda de texto simple sobre el subset de negocios
-  const { data, error } = await supabase
+  // Intento 1: ilike (parcial)
+  let { data, error } = await supabase
     .from('productos')
     .select('*, negocios (nombre, rubro_id)') 
     .in('negocio_id', negocioIds)
     .or(`titulo.ilike.%${termino}%,descripcion.ilike.%${termino}%`)
     .limit(50);
+
+  // Intento 2: FTS si no hay resultados (para typos en productos)
+  if (!error && (!data || data.length === 0)) {
+    const { data: ftsData, error: ftsError } = await supabase
+      .from('productos')
+      .select('*, negocios (nombre, rubro_id)')
+      .in('negocio_id', negocioIds)
+      .textSearch('titulo', termino, { type: 'websearch', config: 'spanish' })
+      .limit(50);
+      
+    if (!ftsError && ftsData && ftsData.length > 0) {
+      data = ftsData;
+    }
+  }
 
   if (error) {
     console.error('Error obteniendo productos:', error);
