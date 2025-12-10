@@ -2,8 +2,10 @@ import './style.css';
 import { navigateTo, goBack } from './utils/navigation.js';
 import { getSearchTerm, updateSearchInputs, clearResults, showLoadingState, showNoResults, renderSkeletonLoader } from './utils/dom.js';
 import { 
-  performFederatedSearch, 
-  obtenerNegociosPorRubro 
+  buscarNegociosCandidatos, 
+  detectarContextoRubros, 
+  buscarProductosGlobalmente,
+  obtenerNegociosPorRubro
 } from './services/searchService.js';
 import { renderProductos, renderNegocios, createBusinessCard } from './components/renderer.js';
 
@@ -15,8 +17,7 @@ window.searchByCategory = searchByCategory;
 window.handleSearchKeyUp = handleSearchKeyUp;
 
 /**
- * ORQUESTADOR DE BÚSQUEDA FEDERADA
- * Decide qué vista mostrar basándose en el "Ganador" del scoring.
+ * ORQUESTADOR DE BÚSQUEDA FEDERADA CON SCORING
  */
 async function performSearch() {
   const searchTerm = getSearchTerm();
@@ -35,50 +36,73 @@ async function performSearch() {
   try {
     console.log(`\n🏁 ORQUESTADOR: Iniciando búsqueda para "${searchTerm}"`);
 
-    // 1. EJECUTAR BÚSQUEDA FEDERADA
-    const { winner, data, stats } = await performFederatedSearch(searchTerm);
+    // 1. EJECUCIÓN PARALELA
+    const [negocios, rubros, productos] = await Promise.all([
+      buscarNegociosCandidatos(searchTerm),
+      detectarContextoRubros(searchTerm),
+      buscarProductosGlobalmente(searchTerm)
+    ]);
 
-    if (!winner) {
-      console.log('❌ Sin resultados relevantes.');
-      showNoResults(searchTerm);
-      return;
-    }
+    console.log(`   📊 Resultados Raw: ${negocios.length} Negocios, ${rubros.length} Rubros, ${productos.length} Productos`);
 
-    console.log(`🏆 GANADOR: ${winner.type.toUpperCase()} (Score: ${winner.score})`);
-    console.log(`   Stats: ${stats.totalBusinesses} negocios, ${stats.totalCategories} rubros, ${stats.totalProducts} productos`);
+    // 2. SCORING Y RANKING
+    const { winner, rankedProducts, rankedBusinesses } = calculateScoring(searchTerm, negocios, rubros, productos);
 
-    // 2. LÓGICA DE DECISIÓN DE VISTA (Decision Tree)
+    console.log(`   🏆 Ganador: ${winner.type} (Score: ${winner.score})`);
 
-    // CASO A: NEGOCIO ÚNICO Y FUERTE (Score > 90)
-    // El usuario buscó exactamente el nombre de un negocio (ej: "McDonalds")
+    // 3. DECISIÓN DE RENDERIZADO
+
+    // CASO A: NEGOCIO ÚNICO Y FUERTE (>90 pts)
     if (winner.type === 'business' && winner.score > 90) {
       console.log('👉 Acción: Mostrar Perfil de Negocio');
-      
-      // Filtrar productos que pertenecen a este negocio
-      const businessProducts = data.products.filter(p => p.negocio_id === winner.data.id);
+      // Filtrar productos de este negocio específico
+      const businessProducts = productos.filter(p => p.negocio_id === winner.data.id);
       renderBusinessProfileView(winner.data, businessProducts);
       return;
     }
 
-    // CASO B: CATEGORÍA DOMINANTE (Score > 70)
-    // El usuario buscó un rubro (ej: "Farmacia", "Hamburguesería")
-    // Y NO hay un producto específico que gane por mucho (ej: no buscó "Hamburguesa completa")
-    const topProductScore = data.products.length > 0 ? data.products[0].score : 0;
-    
-    if (winner.type === 'category' && winner.score > 70 && winner.score > topProductScore) {
-      console.log('👉 Acción: Mostrar Lista de Negocios (Vista Categoría)');
+    // CASO B: PRODUCTOS GANADORES (o Default)
+    if (rankedProducts.length > 0) {
+      console.log('👉 Acción: Mostrar Lista de Productos + Fallback Negocios');
       
-      // Necesitamos traer los negocios de este rubro (la búsqueda federada solo trajo coincidencias de nombre)
-      const categoryBusinesses = await obtenerNegociosPorRubro([winner.data]);
+      // FALLBACK DE SEGURIDAD: Siempre mostrar negocios recomendados abajo
+      let negociosRecomendados = [...rankedBusinesses];
       
-      renderCategoryView(winner.data, categoryBusinesses, data.products);
+      // Si tenemos rubros detectados pero pocos negocios directos, traemos más negocios de esos rubros
+      if (negociosRecomendados.length < 3 && rubros.length > 0) {
+        const extraNegocios = await obtenerNegociosPorRubro(rubros);
+        // Merge evitando duplicados
+        const ids = new Set(negociosRecomendados.map(n => n.id));
+        extraNegocios.forEach(n => {
+          if (!ids.has(n.id)) {
+            negociosRecomendados.push(n);
+            ids.add(n.id);
+          }
+        });
+      }
+
+      renderProductListView(rankedProducts, negociosRecomendados, searchTerm);
       return;
     }
 
-    // CASO C: PRODUCTOS (Default o Ganador)
-    // El usuario buscó un producto (ej: "Ibuprofeno", "Tornillo")
-    console.log('👉 Acción: Mostrar Lista de Productos');
-    renderProductListView(data.products, data.businesses, searchTerm);
+    // CASO C: SOLO RUBROS/NEGOCIOS (Sin productos)
+    // Si no hay productos pero sí detectamos intención de rubro o negocios parciales
+    const allBusinesses = [...rankedBusinesses];
+    if (allBusinesses.length === 0 && rubros.length > 0) {
+       // Si solo tenemos rubros, buscar sus negocios
+       const extra = await obtenerNegociosPorRubro(rubros);
+       allBusinesses.push(...extra);
+    }
+
+    if (allBusinesses.length > 0) {
+      console.log('👉 Acción: Mostrar Lista de Negocios (Fallback)');
+      renderCategoryView(rubros[0] || { nombre: searchTerm }, allBusinesses);
+      return;
+    }
+
+    // CASO D: SIN RESULTADOS
+    console.log('❌ Sin resultados relevantes.');
+    showNoResults(searchTerm);
 
   } catch (error) {
     console.error('❌ Error en orquestador:', error);
@@ -86,20 +110,87 @@ async function performSearch() {
   }
 }
 
+/**
+ * Calcula puntajes de relevancia
+ */
+function calculateScoring(term, businesses, categories, products) {
+  const termLower = term.toLowerCase();
+  const detectedRubroIds = new Set(categories.map(c => c.id));
+  
+  let candidates = [];
+
+  // Score Negocios
+  businesses.forEach(b => {
+    let score = 0;
+    if (b.nombre.toLowerCase() === termLower) score = 100;
+    else if (b.nombre.toLowerCase().startsWith(termLower)) score = 90;
+    else score = 70;
+    
+    candidates.push({ type: 'business', data: b, score });
+  });
+
+  // Score Rubros (Solo para determinar ganador, no se renderizan directo)
+  categories.forEach(c => {
+    let score = 80; // Base alta para rubros
+    if (c.nombre.toLowerCase() === termLower) score = 95;
+    candidates.push({ type: 'category', data: c, score });
+  });
+
+  // Score Productos
+  products.forEach(p => {
+    let score = 60; // Base
+    
+    // Boost de Coherencia (+40 pts)
+    if (p.negocios && detectedRubroIds.has(p.negocios.rubro_id)) {
+      score += 40; // Total 100
+      p.hasContextBoost = true;
+    }
+
+    // Match exacto título
+    if (p.titulo.toLowerCase().includes(termLower)) {
+      score += 10;
+    }
+
+    candidates.push({ type: 'product', data: p, score });
+  });
+
+  // Ordenar
+  candidates.sort((a, b) => b.score - a.score);
+  
+  // Separar listas ordenadas para renderizado
+  const rankedProducts = candidates
+    .filter(c => c.type === 'product')
+    .map(c => c.data); // Ya están ordenados por el sort general si el score es comparable, pero mejor reordenar localmente
+  
+  // Reordenar productos específicamente
+  rankedProducts.sort((a, b) => {
+    const scoreA = (a.hasContextBoost ? 100 : 60);
+    const scoreB = (b.hasContextBoost ? 100 : 60);
+    return scoreB - scoreA;
+  });
+
+  const rankedBusinesses = candidates
+    .filter(c => c.type === 'business')
+    .map(c => c.data);
+
+  return {
+    winner: candidates.length > 0 ? candidates[0] : { type: 'none', score: 0 },
+    rankedProducts,
+    rankedBusinesses
+  };
+}
+
 // =====================================================================
-// VISTAS (Renderers Específicos)
+// VISTAS
 // =====================================================================
 
 function renderBusinessProfileView(business, products) {
   const container = document.getElementById('products-container');
   if (!container) return;
-
   container.innerHTML = '';
   
-  // Tarjeta del Negocio
   container.appendChild(createBusinessCard(business));
 
-  // Productos del Negocio
   if (products && products.length > 0) {
     const separator = document.createElement('div');
     separator.className = 'mt-6 mb-4 text-center text-gray-500 font-medium';
@@ -109,87 +200,27 @@ function renderBusinessProfileView(business, products) {
     const grid = document.createElement('div');
     grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
     
-    // Usamos renderProductos pero capturamos su output o lo hacemos manual para no borrar el container
-    // Aquí simplificamos reutilizando lógica manual rápida
     products.forEach(prod => {
       const card = document.createElement('div');
-      card.className = 'bg-white rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow border-l-4 border-blue-500';
+      card.className = 'bg-white rounded-lg shadow-md p-4 border-l-4 border-blue-500';
       card.innerHTML = `
         <h3 class="font-bold text-lg">${prod.titulo}</h3>
         <p class="text-gray-600 text-sm mt-1">${prod.descripcion || ''}</p>
-        <div class="mt-2 text-xs text-gray-400 font-mono">Relevancia: ${prod.score || 'N/A'}</div>
       `;
       grid.appendChild(card);
     });
     container.appendChild(grid);
-  } else {
-    const empty = document.createElement('p');
-    empty.className = 'text-center text-gray-400 mt-4';
-    empty.textContent = 'Este negocio aún no tiene productos cargados.';
-    container.appendChild(empty);
   }
-
-  navigateTo('view-results-product');
-}
-
-function renderCategoryView(category, businesses, products) {
-  const container = document.getElementById('products-container');
-  if (!container) return;
-  container.innerHTML = '';
-
-  // Título
-  const title = document.createElement('h2');
-  title.className = 'text-2xl font-bold mb-6 text-gray-800';
-  title.textContent = `Negocios de ${category.nombre}`;
-  container.appendChild(title);
-
-  // Lista de Negocios
-  if (businesses.length > 0) {
-    const grid = document.createElement('div');
-    grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8';
-    businesses.forEach(b => grid.appendChild(createBusinessCard(b)));
-    container.appendChild(grid);
-  } else {
-    container.innerHTML += '<p class="text-gray-500">No hay negocios en esta categoría.</p>';
-  }
-
-  // Productos Destacados (si hay)
-  if (products.length > 0) {
-    const separator = document.createElement('div');
-    separator.className = 'mt-8 mb-4 text-xl font-bold border-t pt-6';
-    separator.textContent = 'Productos Relacionados';
-    container.appendChild(separator);
-
-    // Renderizar productos (limitado a 6)
-    const prodGrid = document.createElement('div');
-    prodGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
-    products.slice(0, 6).forEach(prod => {
-       const card = document.createElement('div');
-       card.className = 'bg-white rounded-lg shadow-sm p-4 border border-gray-100';
-       card.innerHTML = `
-         <h3 class="font-bold text-md">${prod.titulo}</h3>
-         <div class="text-sm text-blue-600 mt-1">En: ${prod.negocios?.nombre || 'Negocio'}</div>
-       `;
-       prodGrid.appendChild(card);
-    });
-    container.appendChild(prodGrid);
-  }
-
   navigateTo('view-results-product');
 }
 
 function renderProductListView(products, relatedBusinesses, term) {
   const container = document.getElementById('products-container');
   
-  if (products.length === 0) {
-    showNoResults(term);
-    return;
-  }
-
-  // Usamos el renderizador estándar de productos
+  // Renderizar productos
   renderProductos(products);
 
-  // Agregamos negocios relacionados al final si existen
+  // Renderizar Negocios Recomendados (Fallback)
   if (relatedBusinesses.length > 0) {
     const separator = document.createElement('div');
     separator.className = 'mt-10 mb-6 text-center text-gray-500 font-medium border-t pt-6';
@@ -198,10 +229,30 @@ function renderProductListView(products, relatedBusinesses, term) {
 
     const grid = document.createElement('div');
     grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
-    relatedBusinesses.forEach(b => grid.appendChild(createBusinessCard(b)));
+    relatedBusinesses.slice(0, 6).forEach(b => grid.appendChild(createBusinessCard(b)));
     container.appendChild(grid);
   }
+  navigateTo('view-results-product');
+}
 
+function renderCategoryView(category, businesses) {
+  const container = document.getElementById('products-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const title = document.createElement('h2');
+  title.className = 'text-2xl font-bold mb-6 text-gray-800';
+  title.textContent = `Resultados para "${category.nombre}"`;
+  container.appendChild(title);
+
+  if (businesses.length > 0) {
+    const grid = document.createElement('div');
+    grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8';
+    businesses.forEach(b => grid.appendChild(createBusinessCard(b)));
+    container.appendChild(grid);
+  } else {
+    container.innerHTML += '<p class="text-gray-500">No se encontraron negocios.</p>';
+  }
   navigateTo('view-results-product');
 }
 
