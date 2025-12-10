@@ -2,7 +2,7 @@ import './style.css';
 import { navigateTo, goBack } from './utils/navigation.js';
 import { getSearchTerm, updateSearchInputs, clearResults, showLoadingState, showNoResults, renderSkeletonLoader } from './utils/dom.js';
 import { supabase } from './api/supabase.js';
-import { buscarNegocioDirecto, detectarRubroEstricto, obtenerNegociosPorRubro, obtenerProductosPorRubro, obtenerTodosProductosDelRubro, searchProductos, searchProductosSemantic, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
+import { buscarNegocioDirecto, detectarContextoDeRubros, obtenerNegociosPorRubro, obtenerProductosPorRubro, obtenerTodosProductosDelRubro, searchProductos, searchProductosSemantic, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
 import { renderProductos, renderNegocios, createBusinessCard } from './components/renderer.js';
 
 // Exponer funciones globalmente para onclick handlers en HTML
@@ -13,21 +13,19 @@ window.searchByCategory = searchByCategory;
 window.handleSearchKeyUp = handleSearchKeyUp;
 
 /**
- * MOTOR DE BÚSQUEDA CON JERARQUÍA TOP-DOWN ESTRICTA
+ * MOTOR DE BÚSQUEDA CON RELEVANCIA EXPANDIDA
  * 
- * PASO 1: Búsqueda de Negocio (Prioridad Máxima)
- * - Si encuentra un negocio con coincidencia ilike, muestra su perfil y productos
- * - DETIENE el proceso aquí
+ * PASO 1: Búsqueda Directa de Negocio (MANTENER)
+ * - Si es un negocio específico, mostrar perfil y detener
  * 
- * PASO 2: Detección de Rubro (La Fuente de la Verdad)
- * - Método A: Match exacto en rubros (ilike)
- * - Método B: Palabras clave
- * - Método C: Embedding de Rubro (último recurso)
- * - PROHIBIDO: Inferir rubro desde productos
+ * PASO 2: Detección de Contexto de Rubros (EXPANDIDA)
+ * - Núcleo: Match exacto de rubro o keyword (Prioridad 1)
+ * - Periferia: Rubros relacionados vía búsqueda semántica (Prioridad 2)
+ * - Devuelve array de rubros ordenados por relevancia
  * 
- * PASO 3: Recuperación de Contenido (Scopeado al Rubro)
- * - Obtener negocios del rubro
- * - Obtener productos DEL RUBRO (ilike + vectorial si necesario, pero FILTRADO)
+ * PASO 3: Recuperación Multi-Rubro (FLEXIBLE)
+ * - Buscar productos en todo el contexto de rubros
+ * - Ordenar por prioridad de rubro (Núcleo primero, Periferia después)
  */
 async function performSearch() {
   const searchTerm = getSearchTerm();
@@ -44,7 +42,7 @@ async function performSearch() {
   renderSkeletonLoader();
 
   try {
-    console.log(`\n========== 🔍 BÚSQUEDA JERÁRQUICA TOP-DOWN: "${searchTerm}" ==========\n`);
+    console.log(`\n========== 🔍 BÚSQUEDA CON RELEVANCIA EXPANDIDA: "${searchTerm}" ==========\n`);
 
     // ===================== PASO 1: BÚSQUEDA DE NEGOCIO =====================
     console.log(`\n1️⃣  PASO 1: Buscando negocio directo por nombre...`);
@@ -101,42 +99,43 @@ async function performSearch() {
 
     console.log(`❌ PASO 1 FALLIDO: No es un negocio específico\n`);
 
-    // ==================== PASO 2: DETECCIÓN DE RUBRO ====================
-    console.log(`2️⃣  PASO 2: Detectando Rubro (Fuente de la Verdad)...`);
-    const rubroDetectado = await detectarRubroEstricto(searchTerm);
+    // ==================== PASO 2: DETECCIÓN DE CONTEXTO ====================
+    console.log(`2️⃣  PASO 2: Detectando Contexto de Rubros (Núcleo + Periferia)...`);
+    const contextoDatos = await detectarContextoDeRubros(searchTerm);
 
-    if (!rubroDetectado) {
-      console.log(`\n❌ PASO 2 FALLIDO: No se detectó rubro por ningún método.`);
-      console.log(`   No hay coherencia de categoría. Mostrando "Sin resultados".\n`);
+    if (!contextoDatos || contextoDatos.length === 0) {
+      console.log(`\n❌ PASO 2 FALLIDO: No se detectó contexto de rubros.`);
+      console.log(`   No hay coherencia. Mostrando "Sin resultados".\n`);
       showNoResults(searchTerm);
       navigateTo('view-results-product');
       return;
     }
 
-    console.log(`\n✅ PASO 2 ÉXITO: Rubro detectado: "${rubroDetectado.nombre}" (Método: ${rubroDetectado.metodo})\n`);
+    console.log(`\n✅ PASO 2 ÉXITO: Contexto de ${contextoDatos.length} rubro(s) detectado\n`);
 
-    // ==================== PASO 3: RECUPERACIÓN DE CONTENIDO ====================
-    console.log(`3️⃣  PASO 3: Recuperando contenido scopeado al rubro "${rubroDetectado.nombre}"...`);
+    // ==================== PASO 3: RECUPERACIÓN MULTI-RUBRO ====================
+    console.log(`3️⃣  PASO 3: Recuperando contenido del contexto...`);
 
-    // Obtener negocios del rubro
-    const negociosDelRubro = await obtenerNegociosPorRubro(rubroDetectado.nombre);
-    console.log(`  → Negocios encontrados: ${negociosDelRubro.length}`);
+    // Obtener negocios del contexto (ya ordenados por prioridad)
+    const negociosDelContexto = await obtenerNegociosPorRubro(contextoDatos);
+    console.log(`  → Negocios encontrados: ${negociosDelContexto.length}`);
 
-    // Obtener productos del rubro (con búsqueda ilike + vectorial filtrado)
-    const productosDelRubro = await obtenerProductosPorRubro(searchTerm, rubroDetectado.nombre);
-    console.log(`  → Productos encontrados: ${productosDelRubro.length}\n`);
+    // Obtener productos del contexto (ya ordenados por prioridad de rubro)
+    const productosDelContexto = await obtenerProductosPorRubro(searchTerm, contextoDatos);
+    console.log(`  → Productos encontrados: ${productosDelContexto.length}\n`);
 
     // ==================== PRESENTACIÓN DE RESULTADOS ====================
     console.log(`🎨 PRESENTACIÓN:`);
 
-    if (productosDelRubro.length > 0) {
-      console.log(`  → Renderizando ${productosDelRubro.length} producto(s) del rubro\n`);
+    if (productosDelContexto.length > 0) {
+      console.log(`  → Renderizando ${productosDelContexto.length} producto(s) del contexto`);
+      console.log(`     (Ordenados por prioridad de rubro: ${contextoDatos.join(' > ')})\n`);
       
-      renderProductos(productosDelRubro);
+      renderProductos(productosDelContexto);
 
       // Agregar negocios como sugerencias
-      if (negociosDelRubro && negociosDelRubro.length > 0) {
-        console.log(`  → Agregando ${negociosDelRubro.length} negocio(s) como "También podrías encontrarlo en..."\n`);
+      if (negociosDelContexto && negociosDelContexto.length > 0) {
+        console.log(`  → Agregando ${negociosDelContexto.length} negocio(s) del contexto como "También podrías encontrarlo en..."\n`);
         
         const productsContainer = document.getElementById('products-container');
         if (productsContainer) {
@@ -148,7 +147,7 @@ async function performSearch() {
           const sugGrid = document.createElement('div');
           sugGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4';
 
-          negociosDelRubro.forEach(negocio => {
+          negociosDelContexto.forEach(negocio => {
             const card = createBusinessCard(negocio);
             sugGrid.appendChild(card);
           });
@@ -162,21 +161,21 @@ async function performSearch() {
     }
 
     // Sin productos, mostrar solo negocios
-    if (negociosDelRubro && negociosDelRubro.length > 0) {
-      console.log(`  → Sin productos, mostrando solo ${negociosDelRubro.length} negocio(s)\n`);
+    if (negociosDelContexto && negociosDelContexto.length > 0) {
+      console.log(`  → Sin productos, mostrando solo ${negociosDelContexto.length} negocio(s) del contexto\n`);
       
-      renderNegocios(negociosDelRubro);
+      renderNegocios(negociosDelContexto);
       navigateTo('view-results-business');
       return;
     }
 
     // Sin productos ni negocios
-    console.log(`\n❌ Sin productos ni negocios en rubro "${rubroDetectado.nombre}"`);
+    console.log(`\n❌ Sin productos ni negocios en contexto [${contextoDatos.join(', ')}]`);
     showNoResults(searchTerm);
     navigateTo('view-results-product');
 
   } catch (error) {
-    console.error('❌ Error en búsqueda jerárquica:', error);
+    console.error('❌ Error en búsqueda con relevancia expandida:', error);
     alert('Ocurrió un error al realizar la búsqueda. Por favor, intenta nuevamente.');
   }
 }

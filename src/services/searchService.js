@@ -38,70 +38,106 @@ export async function buscarNegocioDirecto(term) {
 }
 
 // =====================================================================
-// PASO 2: DETECCIÓN DE RUBRO (La Fuente de la Verdad)
+// PASO 2: DETECCIÓN DE CONTEXTO DE RUBROS (Búsqueda Expandida)
 // =====================================================================
 
 /**
- * Detecta el rubro (categoría) del término con jerarquía estricta
- * PROHIBIDO: Inferir rubro desde productos
+ * Detecta un CONTEXTO de rubros relacionados con el término
+ * Devuelve un array de rubros ordenados por prioridad
+ * 
+ * Estrategia de 2 Círculos:
+ * - NÚCLEO (Prioridad 1): Match exacto de rubro o keyword
+ * - PERIFERIA (Prioridad 2): Rubros relacionados encontrados vía búsqueda semántica
+ * 
  * @param {string} term Término de búsqueda
- * @returns {Object|null} Objeto rubro con { nombre, id, metodo }
+ * @returns {Array} Array de strings con rubros válidos, o null si no se detectan
  */
-export async function detectarRubroEstricto(term) {
+export async function detectarContextoDeRubros(term) {
   try {
     const termClean = String(term || '').trim().toLowerCase();
     
-    console.log(`\n📋 PASO 2: Detectando Rubro para "${term}"...`);
+    console.log(`\n🔄 PASO 2: Detectando Contexto de Rubros para "${term}"...`);
 
-    // MÉTODO A: Match exacto en tabla rubros (ilike)
-    console.log('  → Método A: Match exacto en rubros...');
+    // Set para almacenar rubros únicos (evitar duplicados)
+    const rubrosSet = new Set();
+    
+    // ========== NÚCLEO (Prioridad 1) ==========
+    console.log('  ⭐ NÚCLEO (Prioridad 1):');
+    
+    // Método A: Match exacto en tabla rubros
+    console.log('    → Método A: Match exacto en rubros...');
     const { data: rubrosExactos, error: errExacto } = await supabase
       .from('rubros')
       .select('*')
       .ilike('nombre', `%${termClean}%`)
-      .limit(1);
+      .limit(5);
 
     if (!errExacto && rubrosExactos && rubrosExactos.length > 0) {
-      console.log(`✅ PASO 2 ÉXITO (Método A): Rubro encontrado: "${rubrosExactos[0].nombre}"`);
-      return { ...rubrosExactos[0], metodo: 'exacto' };
+      rubrosExactos.forEach(rubro => {
+        rubrosSet.add(rubro.nombre);
+        console.log(`      ✅ Rubro exacto: "${rubro.nombre}"`);
+      });
     }
 
-    // MÉTODO B: Inferencia desde palabras_clave
-    console.log('  → Método B: Busca en palabras_clave...');
+    // Método B: Palabras clave
+    console.log('    → Método B: Búsqueda en palabras_clave...');
     const { data: keywordMatch, error: errKeyword } = await supabase
       .rpc('buscar_keywords', { busqueda: termClean });
 
     if (!errKeyword && keywordMatch && keywordMatch.length > 0) {
-      const rubroInferido = keywordMatch[0].rubro_asociado;
-      if (rubroInferido) {
-        console.log(`✅ PASO 2 ÉXITO (Método B): Rubro inferido desde keywords: "${rubroInferido}"`);
-        return { nombre: rubroInferido, id: null, metodo: 'keyword' };
-      }
+      keywordMatch.forEach(match => {
+        if (match.rubro_asociado) {
+          rubrosSet.add(match.rubro_asociado);
+          console.log(`      ✅ Rubro de keyword: "${match.rubro_asociado}"`);
+        }
+      });
     }
 
-    // MÉTODO C: Embedding de Rubro (match_rubros)
-    console.log('  → Método C: Búsqueda vectorial de rubros...');
+    // ========== PERIFERIA (Prioridad 2) ==========
+    // Siempre ejecutar búsqueda semántica como COMPLEMENTO, no como fallback
+    console.log('  🌍 PERIFERIA (Prioridad 2):');
+    console.log('    → Búsqueda semántica vectorial de negocios relacionados...');
+    
     try {
       const semanticResp = await fetch(`/api/search-semantic?term=${encodeURIComponent(term)}`);
       if (semanticResp.ok) {
         const semanticData = await semanticResp.json();
-        // Extraer rubro de los negocios semánticos
+        
         if (semanticData.results && semanticData.results.length > 0) {
-          const primerNegocio = semanticData.results[0];
-          if (primerNegocio.rubro && primerNegocio.similarity > 0.5) {
-            console.log(`✅ PASO 2 ÉXITO (Método C): Rubro vectorial: "${primerNegocio.rubro}" (similitud: ${primerNegocio.similarity.toFixed(3)})`);
-            return { nombre: primerNegocio.rubro, id: null, metodo: 'vectorial', similarity: primerNegocio.similarity };
+          const rubrosEncontrados = [];
+          
+          semanticData.results.forEach(negocio => {
+            if (negocio.rubro && negocio.similarity > 0.4) { // Umbral más bajo para periferia
+              if (!rubrosSet.has(negocio.rubro)) {
+                rubrosSet.add(negocio.rubro);
+                rubrosEncontrados.push(negocio.rubro);
+                console.log(`      ✅ Rubro relacionado: "${negocio.rubro}" (similitud: ${negocio.similarity.toFixed(3)})`);
+              }
+            }
+          });
+
+          if (rubrosEncontrados.length === 0) {
+            console.log(`      ℹ️ No se encontraron rubros relacionados nuevos`);
           }
         }
       }
     } catch (semErr) {
-      console.warn('  ⚠️ Método C falló:', semErr.message);
+      console.warn('    ⚠️ Búsqueda semántica falló:', semErr.message);
     }
 
-    console.log(`❌ PASO 2 FALLIDO: No se detectó rubro por ningún método`);
-    return null;
+    // Convertir Set a Array
+    const contextoRubros = Array.from(rubrosSet);
+
+    if (contextoRubros.length === 0) {
+      console.log(`\n❌ PASO 2 FALLIDO: No se detectó contexto de rubros`);
+      return null;
+    }
+
+    console.log(`\n✅ PASO 2 ÉXITO: Contexto de ${contextoRubros.length} rubro(s) detectado: [${contextoRubros.join(', ')}]`);
+    return contextoRubros;
+
   } catch (error) {
-    console.error('Error en detectarRubroEstricto:', error);
+    console.error('Error en detectarContextoDeRubros:', error);
     return null;
   }
 }
@@ -111,27 +147,42 @@ export async function detectarRubroEstricto(term) {
 // =====================================================================
 
 /**
- * Obtiene negocios que pertenecen a un rubro específico
- * @param {string} rubro Nombre del rubro
- * @returns {Array} Array de negocios
+ * Obtiene negocios que pertenecen a un contexto de rubros
+ * @param {Array|string} rubros Array de nombres de rubros, o string único
+ * @returns {Array} Array de negocios ordenados por rubro de entrada
  */
-export async function obtenerNegociosPorRubro(rubro) {
+export async function obtenerNegociosPorRubro(rubros) {
   try {
-    if (!rubro || typeof rubro !== 'string') {
-      console.warn('❌ Rubro inválido para obtenerNegociosPorRubro');
+    // Normalizar entrada: aceptar string o array
+    const rubrosArray = Array.isArray(rubros) 
+      ? rubros 
+      : (rubros && typeof rubros === 'string' ? [rubros] : []);
+
+    if (rubrosArray.length === 0) {
+      console.warn('❌ Rubros inválidos para obtenerNegociosPorRubro');
       return [];
     }
 
-    console.log(`\n🏪 Obteniendo negocios del rubro "${rubro}"...`);
+    console.log(`\n🏪 Obteniendo negocios de contexto [${rubrosArray.join(', ')}]...`);
 
+    // Usar IN para múltiples rubros
     const { data, error } = await supabase
       .from('negocios')
       .select('*')
-      .eq('rubro', rubro);
+      .in('rubro', rubrosArray);
 
     if (error) throw error;
 
     const result = data || [];
+    
+    // Ordenar por prioridad de rubro (primero los de Prioridad 1)
+    const prioridadMap = {};
+    rubrosArray.forEach((r, idx) => {
+      prioridadMap[r] = idx;
+    });
+
+    result.sort((a, b) => (prioridadMap[a.rubro] ?? 999) - (prioridadMap[b.rubro] ?? 999));
+
     console.log(`  ✅ Negocios encontrados: ${result.length}`);
     return result;
   } catch (error) {
@@ -141,25 +192,41 @@ export async function obtenerNegociosPorRubro(rubro) {
 }
 
 /**
- * Obtiene productos dentro de un rubro específico
- * ESTRATEGIA: Primero ilike, luego vectorial (filtrado estrictamente por rubro)
+ * Obtiene productos dentro de un contexto de rubros (Multi-rubro)
+ * Estrategia: Primero ilike, luego vectorial (filtrado por contexto de rubros)
+ * 
+ * Ordenamiento:
+ * - Productos de rubros de mayor prioridad (Núcleo) aparecen primero
+ * - Luego productos de rubros de menor prioridad (Periferia)
+ * 
  * @param {string} term Término de búsqueda
- * @param {string} rubro Nombre del rubro
- * @returns {Array} Array de productos
+ * @param {Array|string} rubros Array de nombres de rubros, o string único
+ * @returns {Array} Array de productos ordenados por relevancia de rubro
  */
-export async function obtenerProductosPorRubro(term, rubro) {
+export async function obtenerProductosPorRubro(term, rubros) {
   try {
     const termClean = String(term || '').trim();
     
-    if (!rubro || typeof rubro !== 'string') {
-      console.warn('❌ Rubro inválido para obtenerProductosPorRubro');
+    // Normalizar entrada: aceptar string o array
+    const rubrosArray = Array.isArray(rubros) 
+      ? rubros 
+      : (rubros && typeof rubros === 'string' ? [rubros] : []);
+
+    if (rubrosArray.length === 0) {
+      console.warn('❌ Rubros inválidos para obtenerProductosPorRubro');
       return [];
     }
 
-    console.log(`\n📦 PASO 3: Buscando productos para "${term}" en rubro "${rubro}"...`);
+    console.log(`\n📦 PASO 3: Buscando productos para "${term}" en contexto [${rubrosArray.join(', ')}]...`);
 
-    // SUB-PASO A: ilike por nombre dentro del rubro
-    console.log('  → Sub-paso A: Búsqueda ilike en productos del rubro...');
+    // Crear mapa de prioridades para ordenamiento
+    const prioridadMap = {};
+    rubrosArray.forEach((r, idx) => {
+      prioridadMap[r] = idx;
+    });
+
+    // ========== SUB-PASO A: Búsqueda ilike ==========
+    console.log('  → Sub-paso A: Búsqueda ilike en productos del contexto...');
     let filters = [`titulo.ilike.%${termClean}%`];
 
     // Soporte para plurales
@@ -172,14 +239,14 @@ export async function obtenerProductosPorRubro(term, rubro) {
       .from('productos')
       .select('*, negocios!inner(id, nombre, rubro, google_place_id)')
       .or(filters.join(','))
-      .eq('negocios.rubro', rubro);
+      .in('negocios.rubro', rubrosArray);
 
     if (errLiteral) throw errLiteral;
 
     const resultados = productosLiterales || [];
     console.log(`  ✅ Productos literales encontrados: ${resultados.length}`);
 
-    // SUB-PASO B: Si hay pocos, complementar con búsqueda vectorial (filtrada estrictamente)
+    // ========== SUB-PASO B: Búsqueda Vectorial (Complemento) ==========
     if (resultados.length < 3) {
       console.log('  → Sub-paso B: Complementando con búsqueda vectorial...');
       try {
@@ -191,17 +258,17 @@ export async function obtenerProductosPorRubro(term, rubro) {
           
           console.log(`  ✨ Productos semánticos encontrados: ${productosSemanticos.length}`);
           
-          // RESTRICCIÓN ESTRICTA: Filtrar SOLO productos del rubro detectado
+          // FILTRADO POR CONTEXTO: Solo productos cuyos negocios estén en el contexto
           const seenIds = new Set(resultados.map(p => p.id));
           const semanticosFiltrados = productosSemanticos.filter(p => {
-            const esDelRubro = p.negocios && p.negocios.rubro === rubro;
+            const esDelContexto = p.negocios && rubrosArray.includes(p.negocios.rubro);
             const noEsDuplicado = !seenIds.has(p.id);
             
-            if (!esDelRubro) {
-              console.log(`    🚫 Descartado: "${p.titulo}" (rubro: ${p.negocios?.rubro}), esperado: "${rubro}"`);
+            if (!esDelContexto && p.negocios) {
+              console.log(`    🚫 Descartado: "${p.titulo}" (rubro: ${p.negocios.rubro}), fuera del contexto [${rubrosArray.join(', ')}]`);
             }
             
-            return esDelRubro && noEsDuplicado;
+            return esDelContexto && noEsDuplicado;
           });
           
           resultados.push(...semanticosFiltrados);
@@ -212,6 +279,15 @@ export async function obtenerProductosPorRubro(term, rubro) {
       }
     }
 
+    // ========== ORDENAMIENTO POR PRIORIDAD DE RUBRO ==========
+    resultados.sort((a, b) => {
+      const prioA = prioridadMap[a.negocios?.rubro] ?? 999;
+      const prioB = prioridadMap[b.negocios?.rubro] ?? 999;
+      return prioA - prioB;
+    });
+
+    console.log(`  🎯 Productos ordenados por prioridad de rubro`);
+
     return resultados;
   } catch (error) {
     console.error('Error en obtenerProductosPorRubro:', error);
@@ -220,24 +296,30 @@ export async function obtenerProductosPorRubro(term, rubro) {
 }
 
 /**
- * Obtiene TODOS los productos de un rubro (para exploración)
+ * Obtiene TODOS los productos de un contexto de rubros (para exploración)
+ * @param {Array|string} rubros Array de rubros o string único
+ * @returns {Array} Array de productos
  */
-export async function obtenerTodosProductosDelRubro(rubro) {
+export async function obtenerTodosProductosDelRubro(rubros) {
   try {
-    if (!rubro || typeof rubro !== 'string') return [];
+    const rubrosArray = Array.isArray(rubros) 
+      ? rubros 
+      : (rubros && typeof rubros === 'string' ? [rubros] : []);
 
-    console.log(`📦 Obteniendo todos los productos del rubro "${rubro}"...`);
+    if (rubrosArray.length === 0) return [];
+
+    console.log(`📦 Obteniendo todos los productos del contexto [${rubrosArray.join(', ')}]...`);
 
     const { data, error } = await supabase
       .from('productos')
       .select('*, negocios(id, nombre, rubro, google_place_id)')
-      .eq('negocios.rubro', rubro)
-      .limit(20);
+      .in('negocios.rubro', rubrosArray)
+      .limit(50);
 
     if (error) throw error;
     return data || [];
   } catch (error) {
-    console.error('Error obteniendo productos del rubro:', error);
+    console.error('Error obteniendo productos del contexto:', error);
     return [];
   }
 }
