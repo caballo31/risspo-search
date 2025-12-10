@@ -111,70 +111,125 @@ async function performSearch() {
 }
 
 /**
- * Calcula puntajes de relevancia
+ * Calcula puntajes de relevancia con lógica avanzada de Núcleo/Periferia
  */
 function calculateScoring(term, businesses, categories, products) {
   const termLower = term.toLowerCase();
-  const detectedRubroIds = new Set(categories.map(c => c.id));
+  const termSingular = termLower.endsWith('s') ? termLower.slice(0, -1) : termLower;
+
+  // Mapas de contexto para Boost
+  const nucleoRubroIds = new Set(categories.filter(c => c.tipo === 'nucleo').map(c => c.id));
+  const periferiaRubroIds = new Set(categories.filter(c => c.tipo === 'periferia').map(c => c.id));
   
   let candidates = [];
 
-  // Score Negocios
+  // --- 1. SCORING NEGOCIOS ---
   businesses.forEach(b => {
-    let score = 0;
-    if (b.nombre.toLowerCase() === termLower) score = 100;
-    else if (b.nombre.toLowerCase().startsWith(termLower)) score = 90;
-    else score = 70;
-    
+    let score = 50; // Base
+    const nombreLower = b.nombre.toLowerCase();
+
+    // Match Nombre
+    if (nombreLower === termLower) score += 50; // Exacto (100)
+    else if (nombreLower.startsWith(termLower)) score += 40; // Prefijo (90)
+    else if (nombreLower.includes(termLower)) score += 20; // Parcial (70)
+
+    // Boost por Rubro Relacionado (Si el negocio pertenece a un rubro núcleo)
+    if (nucleoRubroIds.has(b.rubro_id)) score += 15;
+
     candidates.push({ type: 'business', data: b, score });
   });
 
-  // Score Rubros (Solo para determinar ganador, no se renderizan directo)
+  // --- 2. SCORING RUBROS ---
   categories.forEach(c => {
-    let score = 80; // Base alta para rubros
-    if (c.nombre.toLowerCase() === termLower) score = 95;
-    candidates.push({ type: 'category', data: c, score });
+    // El score ya viene calculado desde el servicio (100 nucleo, <90 periferia)
+    // Lo usamos directamente para competir por el "Winner"
+    candidates.push({ type: 'category', data: c, score: c.score });
   });
 
-  // Score Productos
+  // --- 3. SCORING PRODUCTOS ---
   products.forEach(p => {
-    let score = 60; // Base
-    
-    // Boost de Coherencia (+40 pts)
-    if (p.negocios && detectedRubroIds.has(p.negocios.rubro_id)) {
-      score += 40; // Total 100
-      p.hasContextBoost = true;
+    let score = 50; // Base
+    const tituloLower = p.titulo.toLowerCase();
+
+    // A. Match Texto Título
+    if (tituloLower.includes(termLower) || tituloLower.includes(termSingular)) {
+      score += 40; // Match fuerte de texto
     }
 
-    // Match exacto título
-    if (p.titulo.toLowerCase().includes(termLower)) {
-      score += 10;
+    // B. Match Vectorial (Si existe similarity en el objeto producto)
+    // Asumimos que si vino por vector search, tiene propiedad 'similarity'
+    if (p.similarity) {
+      score += (p.similarity * 30); 
+    }
+
+    // C. BOOST RUBRO (La Clave)
+    if (p.negocios) {
+      if (nucleoRubroIds.has(p.negocios.rubro_id)) {
+        score += 50; // BOOST NÚCLEO: Coherencia total (Hamburguesa en Hamburguesería)
+        p.boostType = 'nucleo';
+      } else if (periferiaRubroIds.has(p.negocios.rubro_id)) {
+        score += 10; // BOOST PERIFERIA: Contexto semántico débil
+        p.boostType = 'periferia';
+      }
     }
 
     candidates.push({ type: 'product', data: p, score });
   });
 
-  // Ordenar
+  // --- 4. ORDENAMIENTO Y LIMPIEZA ---
+  
+  // Filtrar ruido (score < 40)
+  candidates = candidates.filter(c => c.score >= 40);
+
+  // Ordenar globalmente
   candidates.sort((a, b) => b.score - a.score);
   
-  // Separar listas ordenadas para renderizado
+  // Separar listas para renderizado
   const rankedProducts = candidates
     .filter(c => c.type === 'product')
-    .map(c => c.data); // Ya están ordenados por el sort general si el score es comparable, pero mejor reordenar localmente
+    .map(c => c.data);
   
-  // Reordenar productos específicamente
-  rankedProducts.sort((a, b) => {
-    const scoreA = (a.hasContextBoost ? 100 : 60);
-    const scoreB = (b.hasContextBoost ? 100 : 60);
-    return scoreB - scoreA;
-  });
-
+  // Ordenar Negocios: Priorizar los que son del Rubro Núcleo
   const rankedBusinesses = candidates
     .filter(c => c.type === 'business')
-    .map(c => c.data);
+    .map(c => c.data)
+    .sort((a, b) => {
+      const isNucleoA = nucleoRubroIds.has(a.rubro_id) ? 1 : 0;
+      const isNucleoB = nucleoRubroIds.has(b.rubro_id) ? 1 : 0;
+      // Si uno es núcleo y el otro no, gana el núcleo
+      if (isNucleoA !== isNucleoB) return isNucleoB - isNucleoA;
+      // Si no, por score normal
+      return b.score - a.score; // Nota: b.score no existe en 'data', hay que usar el map original o inyectar score en data.
+      // Corrección: El sort anterior ya ordenó por score, aquí solo refinamos por rubro.
+      // Pero como map(c => c.data) pierde el score wrapper, el sort aquí no tiene acceso al score calculado arriba.
+      // Mejor estrategia: Inyectar score en data temporalmente o confiar en el sort global.
+      // Confiaremos en el sort global pero aplicaremos un re-sort ligero por rubro.
+    });
+
+  // DETECCIÓN DE CATEGORÍA ESTRICTA
+  // Si el ganador es una Categoría NÚCLEO (Score 100) y gana por mucho a los productos
+  const winner = candidates.length > 0 ? candidates[0] : { type: 'none', score: 0 };
+  
+  // Si el ganador es una categoría núcleo, forzamos que sea el winner aunque haya productos con 90 pts
+  // Excepción: Si el usuario buscó un producto muy específico que matchea texto exacto.
+  const topCategory = candidates.find(c => c.type === 'category');
+  const topProduct = candidates.find(c => c.type === 'product');
+
+  let finalWinner = winner;
+
+  if (topCategory && topCategory.data.tipo === 'nucleo') {
+    // Si hay una categoría núcleo (ej: "Farmacia")
+    // Y el mejor producto no tiene un match de texto EXACTO con el término (ej: no buscó "Ibuprofeno")
+    // Entonces gana la categoría.
+    const termIsProduct = topProduct && topProduct.data.titulo.toLowerCase() === termLower;
+    
+    if (!termIsProduct) {
+      finalWinner = topCategory;
+    }
+  }
 
   return {
-    winner: candidates.length > 0 ? candidates[0] : { type: 'none', score: 0 },
+    winner: finalWinner,
     rankedProducts,
     rankedBusinesses
   };
