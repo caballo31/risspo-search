@@ -1,320 +1,280 @@
 import { supabase } from '../api/supabase.js';
 
 // =====================================================================
-// PASO 1: BÚSQUEDA DE NEGOCIOS CANDIDATOS (Paralelizable)
+// MOTOR DE BÚSQUEDA FEDERADA CON SCORING
 // =====================================================================
 
 /**
- * Busca negocios por nombre (ilike exacto y FTS)
- * Retorna una lista de candidatos, NO se detiene en el primero.
+ * Ejecuta la búsqueda federada en paralelo y calcula puntajes de relevancia.
  * @param {string} term Término de búsqueda
- * @returns {Array} Array de objetos negocio
+ * @returns {Promise<Object>} Objeto con resultados ordenados y metadatos
  */
-export async function buscarNegociosCandidatos(term) {
+export async function performFederatedSearch(term) {
+  const termClean = String(term || '').trim();
+  if (!termClean) return { winner: null, results: [] };
+
+  console.log(`\n🚀 INICIANDO BÚSQUEDA FEDERADA PARA: "${termClean}"`);
+
   try {
-    const termClean = String(term || '').trim();
-    console.log(`\n📍 PASO 1: Buscando candidatos de negocio para "${term}"...`);
+    // 1. EJECUCIÓN PARALELA DE QUERIES (A, B, C)
+    const [businesses, categories, products] = await Promise.all([
+      searchBusinessesQuery(termClean),
+      searchCategoriesQuery(termClean),
+      searchProductsGlobalQuery(termClean)
+    ]);
 
-    // Ejecutar ilike y FTS en paralelo si es posible, o secuencial rápido
-    // Aquí usaremos una estrategia combinada
-    
-    // 1. Búsqueda parcial (ilike)
-    const queryIlike = supabase
-      .from('negocios')
-      .select('*')
-      .ilike('nombre', `%${termClean}%`)
-      .limit(5);
+    console.log(`   📊 Raw Results -> Negocios: ${businesses.length}, Rubros: ${categories.length}, Productos: ${products.length}`);
 
-    // 2. Búsqueda difusa (FTS)
-    const queryFts = supabase
-      .from('negocios')
-      .select('*')
-      .textSearch('nombre', termClean, { type: 'websearch', config: 'spanish' })
-      .limit(5);
+    // 2. CÁLCULO DE SCORING Y RELEVANCIA
+    const scoredResults = calculateRelevance(termClean, businesses, categories, products);
 
-    const [resIlike, resFts] = await Promise.all([queryIlike, queryFts]);
-
-    const candidatos = new Map();
-
-    if (resIlike.data) {
-      resIlike.data.forEach(n => candidatos.set(n.id, n));
-    }
-    
-    if (resFts.data) {
-      resFts.data.forEach(n => {
-        if (!candidatos.has(n.id)) candidatos.set(n.id, n);
-      });
-    }
-
-    const resultados = Array.from(candidatos.values());
-    console.log(`   ✅ Candidatos encontrados: ${resultados.length}`);
-    return resultados;
+    return scoredResults;
 
   } catch (error) {
-    console.error('Error en buscarNegociosCandidatos:', error);
+    console.error('❌ Error crítico en búsqueda federada:', error);
+    return { winner: null, results: [], error };
+  }
+}
+
+// =====================================================================
+// QUERY A: NEGOCIOS (Búsqueda Directa)
+// =====================================================================
+
+async function searchBusinessesQuery(term) {
+  try {
+    // Estrategia: ilike (parcial) + FTS (typos)
+    const { data, error } = await supabase
+      .from('negocios')
+      .select('*')
+      .or(`nombre.ilike.%${term}%`)
+      .limit(5);
+
+    if (error) throw error;
+    return data || [];
+  } catch (e) {
+    console.warn('Error buscando negocios:', e);
     return [];
   }
 }
 
 // =====================================================================
-// PASO 2: DETECCIÓN DE CONTEXTO DE RUBROS (Paralela)
+// QUERY B: RUBROS (Contexto)
 // =====================================================================
 
-/**
- * Detecta el contexto de rubros ejecutando 3 estrategias en PARALELO.
- * Retorna un array de objetos rubro únicos.
- */
-export async function detectarContextoDeRubros(termino) {
-  const terminoNorm = termino.toLowerCase().trim();
-  const resultadosMap = new Map(); // Map<id, {id, nombre, score, tipo}>
-
-  console.log(`🔍 Detectando contexto (PARALELO) para: "${termino}"`);
-
+async function searchCategoriesQuery(term) {
   try {
-    // Definir las 3 promesas de búsqueda
-    
+    const termNorm = term.toLowerCase();
+    const rubrosMap = new Map();
+
     // 1. DB: Match Exacto/Parcial en Rubros
     const pRubrosDB = supabase
       .from('rubros')
       .select('id, nombre')
-      .or(`nombre.ilike.%${terminoNorm}%`) // ilike con wildcards
+      .ilike('nombre', `%${term}%`)
       .limit(5)
-      .then(({ data }) => ({ type: 'db_rubro', data }));
-
-    // 1.5 DB: FTS en Rubros (para typos)
-    const pRubrosFTS = supabase
-      .from('rubros')
-      .select('id, nombre')
-      .textSearch('nombre', terminoNorm, { type: 'websearch', config: 'spanish' })
-      .limit(5)
-      .then(({ data }) => ({ type: 'db_fts', data }));
+      .then(({ data }) => data || []);
 
     // 2. DB: Keywords
     const pKeywords = supabase
       .from('palabras_clave')
       .select('rubro_id, keyword, rubros ( id, nombre )')
-      .ilike('keyword', `%${terminoNorm}%`)
+      .ilike('keyword', `%${term}%`)
       .limit(5)
-      .then(({ data }) => ({ type: 'db_keyword', data }));
+      .then(({ data }) => data || []);
 
-    // 3. API: Semántica
-    const pSemantico = fetch(`/api/search-semantic?term=${encodeURIComponent(termino)}`)
+    // 3. API: Semántica (Vectorial)
+    const pSemantico = fetch(`/api/search-semantic?term=${encodeURIComponent(term)}`)
       .then(res => res.ok ? res.json() : { results: [] })
-      .then(data => ({ type: 'api_semantic', data: data.results }))
-      .catch(err => {
-        console.warn('⚠️ Fallo API Semántica:', err);
-        return { type: 'api_semantic', data: [] };
-      });
+      .then(data => data.results || [])
+      .catch(() => []);
 
-    // EJECUCIÓN PARALELA
-    const results = await Promise.all([pRubrosDB, pRubrosFTS, pKeywords, pSemantico]);
+    const [dbRubros, dbKeywords, apiSemantic] = await Promise.all([pRubrosDB, pKeywords, pSemantico]);
 
-    // PROCESAMIENTO DE RESULTADOS
-    
-    // Procesar DB Rubros (Exacto/Parcial)
-    if (results[0].data) {
-      results[0].data.forEach(r => {
-        resultadosMap.set(r.id, { ...r, score: 100, tipo: 'exacto' });
-      });
-    }
-
-    // Procesar DB FTS (Typos)
-    if (results[1].data) {
-      results[1].data.forEach(r => {
-        if (!resultadosMap.has(r.id)) {
-          resultadosMap.set(r.id, { ...r, score: 95, tipo: 'fuzzy' });
-        }
-      });
-    }
+    // Procesar DB Rubros
+    dbRubros.forEach(r => rubrosMap.set(r.id, { ...r, source: 'exact', score: 80 }));
 
     // Procesar Keywords
-    if (results[2].data) {
-      results[2].data.forEach(k => {
-        if (k.rubros && !resultadosMap.has(k.rubros.id)) {
-          resultadosMap.set(k.rubros.id, { 
-            id: k.rubros.id, 
-            nombre: k.rubros.nombre, 
-            score: 85, 
-            tipo: 'keyword' 
-          });
-        }
-      });
-    }
+    dbKeywords.forEach(k => {
+      if (k.rubros && !rubrosMap.has(k.rubros.id)) {
+        rubrosMap.set(k.rubros.id, { ...k.rubros, source: 'keyword', score: 75 });
+      }
+    });
 
     // Procesar Semántico
-    const semanticData = results[3].data;
-    if (semanticData && semanticData.length > 0) {
-      const rubroIds = semanticData.filter(r => r.rubro_id).map(r => r.rubro_id);
-      
-      if (rubroIds.length > 0) {
-        // Necesitamos los nombres de estos rubros si no vinieron en la API
-        // Hacemos un fetch rápido a DB para completar info
-        const { data: rubrosSem } = await supabase
-          .from('rubros')
-          .select('id, nombre')
-          .in('id', rubroIds);
+    // Necesitamos hidratar los IDs con nombres si vienen de la API
+    const semanticIds = apiSemantic.filter(r => r.rubro_id).map(r => r.rubro_id);
+    if (semanticIds.length > 0) {
+      const { data: rubrosSem } = await supabase.from('rubros').select('id, nombre').in('id', semanticIds);
+      if (rubrosSem) {
+        rubrosSem.forEach(r => {
+          if (!rubrosMap.has(r.id)) {
+            rubrosMap.set(r.id, { ...r, source: 'semantic', score: 60 });
+          }
+        });
+      }
+    }
 
-        if (rubrosSem) {
-          rubrosSem.forEach(r => {
-            if (!resultadosMap.has(r.id)) {
-              const originalResult = semanticData.find(res => res.rubro_id === r.id);
-              const similarity = originalResult ? originalResult.similarity : 0.7;
-              resultadosMap.set(r.id, {
-                id: r.id,
-                nombre: r.nombre,
-                score: similarity * 100, 
-                tipo: 'semantico'
+    return Array.from(rubrosMap.values());
+  } catch (e) {
+    console.warn('Error buscando rubros:', e);
+    return [];
+  }
+}
+
+// =====================================================================
+// QUERY C: PRODUCTOS GLOBAL (Sin filtros previos)
+// =====================================================================
+
+async function searchProductsGlobalQuery(term) {
+  try {
+    // 1. Búsqueda de Texto (ilike) en TODOS los productos
+    // IMPORTANTE: Traemos datos del negocio para el Boost de Coherencia
+    const { data, error } = await supabase
+      .from('productos')
+      .select('*, negocios (id, nombre, rubro_id)')
+      .or(`titulo.ilike.%${term}%,descripcion.ilike.%${term}%`)
+      .limit(20);
+
+    if (error) throw error;
+    
+    let products = data || [];
+
+    // 2. Fallback Vectorial si hay pocos resultados
+    if (products.length < 3) {
+      try {
+        const semResp = await fetch(`/api/search-semantic-products?term=${encodeURIComponent(term)}`);
+        if (semResp.ok) {
+          const semData = await semResp.json();
+          if (semData.results) {
+            // Hidratar con datos de negocio porque el vector search a veces no trae todo
+            const productIds = semData.results.map(p => p.id);
+            const { data: semProducts } = await supabase
+              .from('productos')
+              .select('*, negocios (id, nombre, rubro_id)')
+              .in('id', productIds);
+            
+            if (semProducts) {
+              // Merge evitando duplicados
+              const existingIds = new Set(products.map(p => p.id));
+              semProducts.forEach(p => {
+                if (!existingIds.has(p.id)) products.push(p);
               });
             }
-          });
+          }
         }
-      }
+      } catch (err) { console.warn('Vector products failed', err); }
     }
 
-  } catch (err) {
-    console.error('Error en detección de contexto:', err);
+    return products;
+  } catch (e) {
+    console.warn('Error buscando productos globales:', e);
+    return [];
   }
-
-  return Array.from(resultadosMap.values()).sort((a, b) => b.score - a.score);
 }
 
-// ==========================================
-// 3. RECUPERACIÓN DE NEGOCIOS (POR ID)
-// ==========================================
+// =====================================================================
+// SISTEMA DE SCORING (Lógica de Negocio)
+// =====================================================================
 
-export async function obtenerNegociosPorRubro(contextoRubros) {
-  if (!contextoRubros?.length) return [];
-
-  const ids = contextoRubros.map(r => r.id);
+function calculateRelevance(term, businesses, categories, products) {
+  const termLower = term.toLowerCase();
   
-  const { data, error } = await supabase
-    .from('negocios')
-    .select('*')
-    .in('rubro_id', ids);
+  // 1. Normalizar Entidades para el Ranking Unificado
+  let rankedItems = [];
 
-  if (error) {
-    console.error('Error obteniendo negocios:', error);
-    return [];
-  }
+  // --- SCORING NEGOCIOS ---
+  businesses.forEach(b => {
+    let score = 0;
+    if (b.nombre.toLowerCase() === termLower) score = 100; // Exacto
+    else if (b.nombre.toLowerCase().startsWith(termLower)) score = 90; // Prefijo
+    else score = 70; // Parcial
 
-  // Ordenar negocios según la prioridad del rubro
-  const ordenRubros = new Map(ids.map((id, i) => [id, i]));
-  return data.sort((a, b) => {
-    return (ordenRubros.get(a.rubro_id) || 999) - (ordenRubros.get(b.rubro_id) || 999);
+    rankedItems.push({
+      type: 'business',
+      data: b,
+      score: score,
+      id: `biz-${b.id}`
+    });
   });
-}
 
-// ==========================================
-// 4. RECUPERACIÓN DE PRODUCTOS (HÍBRIDA)
-// ==========================================
+  // --- SCORING RUBROS ---
+  const detectedRubroIds = new Set(); // Para el Boost de productos
+  categories.forEach(c => {
+    detectedRubroIds.add(c.id);
+    let score = c.score || 60; // Base score from query
+    
+    // Boost si es match exacto de nombre
+    if (c.nombre.toLowerCase() === termLower) score = 85;
 
-/**
- * Obtiene productos de una lista de negocios.
- * @param {string} termino Término de búsqueda
- * @param {Array} negocios Array de objetos negocio
- * @param {boolean} esBusquedaCategoria Si es true, trae productos destacados sin filtrar por nombre
- */
-export async function obtenerProductosDeNegocios(termino, negocios, esBusquedaCategoria = false) {
-  if (!negocios?.length) return [];
+    rankedItems.push({
+      type: 'category',
+      data: c,
+      score: score,
+      id: `cat-${c.id}`
+    });
+  });
 
-  const negocioIds = negocios.map(n => n.id);
-  if (negocioIds.length === 0) return [];
+  // --- SCORING PRODUCTOS (Con Boost de Coherencia) ---
+  products.forEach(p => {
+    let score = 50; // Base score producto
 
-  console.log(`📦 Buscando productos en ${negocios.length} negocios. Modo Categoría: ${esBusquedaCategoria}`);
+    // Match exacto en título
+    if (p.titulo.toLowerCase() === termLower) score += 10;
 
-  try {
-    let data = [];
-    let error = null;
-
-    if (esBusquedaCategoria) {
-      // ESTRATEGIA A: Modo Categoría (ej: "Farmacia")
-      // Traer productos destacados o genéricos de esos negocios
-      // No filtramos por título porque el usuario busca el rubro, no un producto llamado "Farmacia"
-      const result = await supabase
-        .from('productos')
-        .select('*, negocios (nombre, rubro_id)') 
-        .in('negocio_id', negocioIds)
-        .limit(50); // Traer un mix de productos
-      
-      data = result.data;
-      error = result.error;
-
-    } else {
-      // ESTRATEGIA B: Modo Producto (ej: "Ibuprofeno")
-      // Filtrar por título/descripción
-      
-      // 1. ilike
-      let result = await supabase
-        .from('productos')
-        .select('*, negocios (nombre, rubro_id)') 
-        .in('negocio_id', negocioIds)
-        .or(`titulo.ilike.%${termino}%,descripcion.ilike.%${termino}%`)
-        .limit(50);
-      
-      data = result.data;
-      error = result.error;
-
-      // 2. Fallback FTS si pocos resultados
-      if (!error && (!data || data.length < 3)) {
-        console.log('   ...Pocos resultados ilike, intentando FTS en productos');
-        const ftsResult = await supabase
-          .from('productos')
-          .select('*, negocios (nombre, rubro_id)')
-          .in('negocio_id', negocioIds)
-          .textSearch('titulo', termino, { type: 'websearch', config: 'spanish' })
-          .limit(50);
-          
-        if (!ftsResult.error && ftsResult.data && ftsResult.data.length > 0) {
-          // Combinar resultados evitando duplicados
-          const existingIds = new Set(data.map(p => p.id));
-          ftsResult.data.forEach(p => {
-            if (!existingIds.has(p.id)) data.push(p);
-          });
-        }
-      }
-      
-      // 3. Fallback Vectorial de Productos (Si sigue habiendo pocos)
-      if (!error && (!data || data.length < 2)) {
-         console.log('   ...Muy pocos resultados, intentando búsqueda vectorial de productos');
-         try {
-            const semanticProdResp = await fetch(`/api/search-semantic-products?term=${encodeURIComponent(termino)}`);
-            if (semanticProdResp.ok) {
-                const semData = await semanticProdResp.json();
-                if (semData.results) {
-                    // Filtrar solo los que pertenecen a los negocios identificados
-                    const semFiltered = semData.results.filter(p => negocioIds.includes(p.negocio_id));
-                    const existingIds = new Set(data.map(p => p.id));
-                    semFiltered.forEach(p => {
-                        if (!existingIds.has(p.id)) data.push(p);
-                    });
-                }
-            }
-         } catch (e) { console.warn('Fallo vector productos', e); }
-      }
+    // BOOST DE COHERENCIA: +30 pts
+    // Si el producto pertenece a un rubro que TAMBIÉN fue detectado en la Query B
+    if (p.negocios && detectedRubroIds.has(p.negocios.rubro_id)) {
+      score += 30;
+      p.hasContextBoost = true; // Flag para UI si se quiere destacar
     }
 
-    if (error) {
-      console.error('Error obteniendo productos:', error);
-      return [];
+    rankedItems.push({
+      type: 'product',
+      data: p,
+      score: score,
+      id: `prod-${p.id}`
+    });
+  });
+
+  // 2. Ordenar por Score Descendente
+  rankedItems.sort((a, b) => b.score - a.score);
+
+  // 3. Determinar Ganador y Estructura de Respuesta
+  const winner = rankedItems.length > 0 ? rankedItems[0] : null;
+  
+  // Agrupar para facilitar el renderizado
+  const topBusinesses = rankedItems.filter(i => i.type === 'business').map(i => i.data);
+  const topCategories = rankedItems.filter(i => i.type === 'category').map(i => i.data);
+  const topProducts = rankedItems.filter(i => i.type === 'product').map(i => i.data);
+
+  return {
+    winner,
+    stats: {
+      totalBusinesses: topBusinesses.length,
+      totalCategories: topCategories.length,
+      totalProducts: topProducts.length
+    },
+    data: {
+      businesses: topBusinesses,
+      categories: topCategories,
+      products: topProducts
     }
-
-    return data || [];
-
-  } catch (err) {
-    console.error('Excepción en obtenerProductosDeNegocios:', err);
-    return [];
-  }
+  };
 }
 
-// Alias para compatibilidad
-export const buscarNegocioDirecto = async (t) => (await buscarNegociosCandidatos(t))[0] || null;
-export const obtenerProductosPorRubro = (t, r) => obtenerProductosDeNegocios(t, [], false); // Stub
-export const obtenerTodosProductosDelRubro = async () => []; // Stub
+// =====================================================================
+// EXPORTS & ALIASES (Compatibilidad)
+// =====================================================================
 
-// Stubs legacy
-export async function searchProductos(query) { return []; }
-export async function searchProductosSemantic(query) { return []; }
-export async function searchPalabrasClave(query) { return []; }
-export async function searchNegociosByRubro(rubro) { return []; }
-export async function searchNegociosByNombre(nombre) { return []; }
-export async function searchSemantic(query) { return []; }
+// Funciones auxiliares que podrían ser usadas por componentes legacy
+export async function obtenerNegociosPorRubro(rubros) {
+  if (!rubros.length) return [];
+  const ids = rubros.map(r => r.id);
+  const { data } = await supabase.from('negocios').select('*').in('rubro_id', ids);
+  return data || [];
+}
+
+// Stubs para mantener compatibilidad si algo más importa esto
+export const buscarNegociosCandidatos = async () => [];
+export const detectarContextoDeRubros = async () => [];
+export const obtenerProductosDeNegocios = async () => [];
