@@ -1,7 +1,8 @@
 import './style.css';
 import { navigateTo, goBack } from './utils/navigation.js';
 import { getSearchTerm, updateSearchInputs, clearResults, showLoadingState, showNoResults, renderSkeletonLoader } from './utils/dom.js';
-import { detectarRubro, buscarProductosPorRubro, obtenerTodosProductosDelRubro, searchProductos, searchProductosSemantic, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
+import { supabase } from './api/supabase.js';
+import { buscarNegocioDirecto, detectarRubroEstricto, obtenerNegociosPorRubro, obtenerProductosPorRubro, obtenerTodosProductosDelRubro, searchProductos, searchProductosSemantic, searchPalabrasClave, searchNegociosByRubro, searchNegociosByNombre, searchSemantic } from './services/searchService.js';
 import { renderProductos, renderNegocios, createBusinessCard } from './components/renderer.js';
 
 // Exponer funciones globalmente para onclick handlers en HTML
@@ -12,41 +13,21 @@ window.searchByCategory = searchByCategory;
 window.handleSearchKeyUp = handleSearchKeyUp;
 
 /**
- * Filtra resultados semánticos por relevancia adaptativa
- * Estrategia: Usar similitud para decidir cuántos resultados mostrar
- * @param {Array} results Array de objetos con propiedad 'similarity'
- * @returns {Array} Resultados filtrados por relevancia
- */
-function filterByRelevance(results) {
-  if (!results || results.length === 0) return [];
-  
-  // Asegurar orden por similitud (descendente)
-  results.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
-  const bestScore = results[0].similarity || 0;
-
-  console.log(`📊 Filtrado de relevancia: mejor score = ${bestScore.toFixed(3)}`);
-
-  // ESTRATEGIA ADAPTATIVA
-
-  // Caso A: Coincidencia Alta (ej: Typos o términos exactos)
-  // Si el mejor es > 0.6, cortamos la cola de resultados mediocres para evitar ruido
-  if (bestScore > 0.6) {
-    console.log('  → Modo ALTA RELEVANCIA: filtrando scores < 0.5');
-    return results.filter(r => r.similarity > 0.5);
-  }
-
-  // Caso B: Coincidencia Media (ej: Conceptos abstractos como "tengo hambre")
-  // Somos más flexibles, pero limitamos a los top 3-4 para no mostrar disparates
-  console.log('  → Modo RELEVANCIA MEDIA: tomando top 3-4 resultados');
-  return results.slice(0, 4);
-}
-
-/**
- * MOTOR DE BÚSQUEDA EN CASCADA (WATERFALL)
- * Estrategia secuencial para optimizar recursos y precisión:
- * NIVEL 1: Detectar rubro (categoría)
- * NIVEL 2: Buscar productos y negocios dentro de ese rubro
- * NIVEL 3: Presentación con exploración
+ * MOTOR DE BÚSQUEDA CON JERARQUÍA TOP-DOWN ESTRICTA
+ * 
+ * PASO 1: Búsqueda de Negocio (Prioridad Máxima)
+ * - Si encuentra un negocio con coincidencia ilike, muestra su perfil y productos
+ * - DETIENE el proceso aquí
+ * 
+ * PASO 2: Detección de Rubro (La Fuente de la Verdad)
+ * - Método A: Match exacto en rubros (ilike)
+ * - Método B: Palabras clave
+ * - Método C: Embedding de Rubro (último recurso)
+ * - PROHIBIDO: Inferir rubro desde productos
+ * 
+ * PASO 3: Recuperación de Contenido (Scopeado al Rubro)
+ * - Obtener negocios del rubro
+ * - Obtener productos DEL RUBRO (ilike + vectorial si necesario, pero FILTRADO)
  */
 async function performSearch() {
   const searchTerm = getSearchTerm();
@@ -63,42 +44,100 @@ async function performSearch() {
   renderSkeletonLoader();
 
   try {
-    console.log(`\n========== 🔍 BÚSQUEDA EN CASCADA: "${searchTerm}" ==========\n`);
+    console.log(`\n========== 🔍 BÚSQUEDA JERÁRQUICA TOP-DOWN: "${searchTerm}" ==========\n`);
 
-    // ====================== NIVEL 1: DETECCIÓN DE RUBRO ======================
-    console.log(`📋 NIVEL 1: Detectando Rubro...`);
-    const rubroDetectado = await detectarRubro(searchTerm);
+    // ===================== PASO 1: BÚSQUEDA DE NEGOCIO =====================
+    console.log(`\n1️⃣  PASO 1: Buscando negocio directo por nombre...`);
+    const negocioDirecto = await buscarNegocioDirecto(searchTerm);
+
+    if (negocioDirecto) {
+      console.log(`✅ PASO 1 ÉXITO: Negocio encontrado: "${negocioDirecto.nombre}"`);
+      console.log(`   DETENER aquí y mostrar perfil del negocio.\n`);
+
+      // Mostrar perfil del negocio (tarjeta única)
+      const singleCard = createBusinessCard(negocioDirecto);
+      const productsContainer = document.getElementById('products-container');
+      if (productsContainer) {
+        productsContainer.innerHTML = '';
+        productsContainer.appendChild(singleCard);
+      }
+
+      // Si el negocio tiene productos asociados, mostrarlos también
+      try {
+        const { data: productosNegocio } = await supabase
+          .from('productos')
+          .select('*')
+          .eq('negocio_id', negocioDirecto.id)
+          .limit(20);
+
+        if (productosNegocio && productosNegocio.length > 0) {
+          const separator = document.createElement('div');
+          separator.className = 'mt-6 text-center text-gray-500 font-medium';
+          separator.textContent = 'Productos de este negocio:';
+          productsContainer.appendChild(separator);
+
+          const grid = document.createElement('div');
+          grid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4';
+          
+          productosNegocio.forEach(prod => {
+            const card = document.createElement('div');
+            card.className = 'bg-white rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow';
+            card.innerHTML = `
+              <h3 class="font-bold text-lg">${prod.titulo}</h3>
+              <p class="text-gray-600 text-sm mt-1">${prod.descripcion || 'Sin descripción'}</p>
+            `;
+            grid.appendChild(card);
+          });
+
+          productsContainer.appendChild(grid);
+        }
+      } catch (e) {
+        console.warn('No se pudieron cargar productos del negocio:', e);
+      }
+
+      navigateTo('view-results-product');
+      return;
+    }
+
+    console.log(`❌ PASO 1 FALLIDO: No es un negocio específico\n`);
+
+    // ==================== PASO 2: DETECCIÓN DE RUBRO ====================
+    console.log(`2️⃣  PASO 2: Detectando Rubro (Fuente de la Verdad)...`);
+    const rubroDetectado = await detectarRubroEstricto(searchTerm);
 
     if (!rubroDetectado) {
-      console.log(`❌ No se detectó rubro. Mostrando "Sin resultados".`);
+      console.log(`\n❌ PASO 2 FALLIDO: No se detectó rubro por ningún método.`);
+      console.log(`   No hay coherencia de categoría. Mostrando "Sin resultados".\n`);
       showNoResults(searchTerm);
       navigateTo('view-results-product');
       return;
     }
 
-    console.log(`✅ Rubro detectado: "${rubroDetectado.nombre}"\n`);
+    console.log(`\n✅ PASO 2 ÉXITO: Rubro detectado: "${rubroDetectado.nombre}" (Método: ${rubroDetectado.metodo})\n`);
 
-    // ====================== NIVEL 2: BÚSQUEDA EN EL RUBRO ======================
-    console.log(`🛍️  NIVEL 2: Buscando productos en rubro "${rubroDetectado.nombre}"...`);
-    
-    const productosDelRubro = await buscarProductosPorRubro(searchTerm, rubroDetectado);
+    // ==================== PASO 3: RECUPERACIÓN DE CONTENIDO ====================
+    console.log(`3️⃣  PASO 3: Recuperando contenido scopeado al rubro "${rubroDetectado.nombre}"...`);
+
+    // Obtener negocios del rubro
+    const negociosDelRubro = await obtenerNegociosPorRubro(rubroDetectado.nombre);
+    console.log(`  → Negocios encontrados: ${negociosDelRubro.length}`);
+
+    // Obtener productos del rubro (con búsqueda ilike + vectorial filtrado)
+    const productosDelRubro = await obtenerProductosPorRubro(searchTerm, rubroDetectado.nombre);
     console.log(`  → Productos encontrados: ${productosDelRubro.length}\n`);
 
-    // Obtener todos los negocios del rubro (para sugerencias de exploración)
-    const negociosDelRubro = await searchNegociosByRubro(rubroDetectado.nombre);
-    console.log(`  → Negocios del rubro: ${negociosDelRubro?.length || 0}\n`);
+    // ==================== PRESENTACIÓN DE RESULTADOS ====================
+    console.log(`🎨 PRESENTACIÓN:`);
 
-    // ====================== NIVEL 3: PRESENTACIÓN ======================
     if (productosDelRubro.length > 0) {
-      console.log(`🎨 NIVEL 3: Presentación de resultados`);
-      console.log(`  → Renderizando ${productosDelRubro.length} producto(s) encontrado(s)\n`);
+      console.log(`  → Renderizando ${productosDelRubro.length} producto(s) del rubro\n`);
       
-      // Renderizar productos encontrados
       renderProductos(productosDelRubro);
 
-      // Mostrar negocios como sugerencias si existen
+      // Agregar negocios como sugerencias
       if (negociosDelRubro && negociosDelRubro.length > 0) {
-        console.log(`  → Agregando ${negociosDelRubro.length} negocio(s) como "También podrías encontrarlo en..."  `);
+        console.log(`  → Agregando ${negociosDelRubro.length} negocio(s) como "También podrías encontrarlo en..."\n`);
+        
         const productsContainer = document.getElementById('products-container');
         if (productsContainer) {
           const separator = document.createElement('div');
@@ -122,10 +161,9 @@ async function performSearch() {
       return;
     }
 
-    // Si no hay productos, mostrar solo negocios
+    // Sin productos, mostrar solo negocios
     if (negociosDelRubro && negociosDelRubro.length > 0) {
-      console.log(`🎨 NIVEL 3: Sin productos, mostrando negocios del rubro`);
-      console.log(`  → Renderizando ${negociosDelRubro.length} negocio(s)\n`);
+      console.log(`  → Sin productos, mostrando solo ${negociosDelRubro.length} negocio(s)\n`);
       
       renderNegocios(negociosDelRubro);
       navigateTo('view-results-business');
@@ -133,12 +171,12 @@ async function performSearch() {
     }
 
     // Sin productos ni negocios
-    console.log(`❌ Sin productos ni negocios en rubro "${rubroDetectado.nombre}"`);
+    console.log(`\n❌ Sin productos ni negocios en rubro "${rubroDetectado.nombre}"`);
     showNoResults(searchTerm);
     navigateTo('view-results-product');
 
   } catch (error) {
-    console.error('❌ Error en búsqueda en cascada:', error);
+    console.error('❌ Error en búsqueda jerárquica:', error);
     alert('Ocurrió un error al realizar la búsqueda. Por favor, intenta nuevamente.');
   }
 }

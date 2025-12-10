@@ -1,20 +1,60 @@
 import { supabase } from '../api/supabase.js';
 
+// =====================================================================
+// PASO 1: BÚSQUEDA DE NEGOCIO (Prioridad Máxima)
+// =====================================================================
+
 /**
- * NIVEL 1: Detecta el rubro (categoría) del término de búsqueda
- * Estrategia en cascada:
- * 1. Match exacto contra tabla rubros (ilike)
- * 2. Inferencia desde palabras_clave
- * 3. Búsqueda semántica contra rubros (última opción)
+ * Busca un negocio por nombre (ilike exacto)
+ * Si encuentra coincidencia alta, retorna el negocio para mostrar su perfil
+ * @param {string} term Término de búsqueda
+ * @returns {Object|null} Objeto negocio si se encuentra, null en caso contrario
  */
-export async function detectarRubro(term) {
+export async function buscarNegocioDirecto(term) {
+  try {
+    const termClean = String(term || '').trim();
+    
+    console.log(`\n📍 PASO 1: Buscando negocio directo para "${term}"...`);
+
+    const { data, error } = await supabase
+      .from('negocios')
+      .select('*')
+      .ilike('nombre', `%${termClean}%`)
+      .limit(1);
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      console.log(`✅ PASO 1 ÉXITO: Negocio encontrado: "${data[0].nombre}"`);
+      return data[0];
+    }
+
+    console.log(`❌ PASO 1 FALLIDO: No se encontró negocio directo`);
+    return null;
+  } catch (error) {
+    console.error('Error en buscarNegocioDirecto:', error);
+    return null;
+  }
+}
+
+// =====================================================================
+// PASO 2: DETECCIÓN DE RUBRO (La Fuente de la Verdad)
+// =====================================================================
+
+/**
+ * Detecta el rubro (categoría) del término con jerarquía estricta
+ * PROHIBIDO: Inferir rubro desde productos
+ * @param {string} term Término de búsqueda
+ * @returns {Object|null} Objeto rubro con { nombre, id, metodo }
+ */
+export async function detectarRubroEstricto(term) {
   try {
     const termClean = String(term || '').trim().toLowerCase();
     
-    console.log(`🔍 Nivel 1: Detectando rubro para "${term}"`);
+    console.log(`\n📋 PASO 2: Detectando Rubro para "${term}"...`);
 
-    // 1.A: Búsqueda exacta en tabla rubros
-    console.log('  → Intentando match exacto en rubros...');
+    // MÉTODO A: Match exacto en tabla rubros (ilike)
+    console.log('  → Método A: Match exacto en rubros...');
     const { data: rubrosExactos, error: errExacto } = await supabase
       .from('rubros')
       .select('*')
@@ -22,69 +62,104 @@ export async function detectarRubro(term) {
       .limit(1);
 
     if (!errExacto && rubrosExactos && rubrosExactos.length > 0) {
-      console.log(`  ✅ Rubro encontrado (exacto): "${rubrosExactos[0].nombre}"`);
-      return rubrosExactos[0];
+      console.log(`✅ PASO 2 ÉXITO (Método A): Rubro encontrado: "${rubrosExactos[0].nombre}"`);
+      return { ...rubrosExactos[0], metodo: 'exacto' };
     }
 
-    // 1.B: Inferencia desde palabras_clave
-    console.log('  → Intentando inferencia desde palabras_clave...');
+    // MÉTODO B: Inferencia desde palabras_clave
+    console.log('  → Método B: Busca en palabras_clave...');
     const { data: keywordMatch, error: errKeyword } = await supabase
       .rpc('buscar_keywords', { busqueda: termClean });
 
     if (!errKeyword && keywordMatch && keywordMatch.length > 0) {
       const rubroInferido = keywordMatch[0].rubro_asociado;
       if (rubroInferido) {
-        console.log(`  ✅ Rubro inferido (keyword): "${rubroInferido}"`);
-        return { nombre: rubroInferido, id: null };
+        console.log(`✅ PASO 2 ÉXITO (Método B): Rubro inferido desde keywords: "${rubroInferido}"`);
+        return { nombre: rubroInferido, id: null, metodo: 'keyword' };
       }
     }
 
-    // 1.C: Búsqueda semántica contra rubros (última opción)
-    console.log('  → Intentando búsqueda semántica de rubros...');
+    // MÉTODO C: Embedding de Rubro (match_rubros)
+    console.log('  → Método C: Búsqueda vectorial de rubros...');
     try {
       const semanticResp = await fetch(`/api/search-semantic?term=${encodeURIComponent(term)}`);
       if (semanticResp.ok) {
         const semanticData = await semanticResp.json();
-        // Intentar extraer rubro de los negocios semánticos
+        // Extraer rubro de los negocios semánticos
         if (semanticData.results && semanticData.results.length > 0) {
           const primerNegocio = semanticData.results[0];
-          if (primerNegocio.rubro) {
-            console.log(`  ✅ Rubro inferido (semántica): "${primerNegocio.rubro}"`);
-            return { nombre: primerNegocio.rubro, id: null, similarity: primerNegocio.similarity };
+          if (primerNegocio.rubro && primerNegocio.similarity > 0.5) {
+            console.log(`✅ PASO 2 ÉXITO (Método C): Rubro vectorial: "${primerNegocio.rubro}" (similitud: ${primerNegocio.similarity.toFixed(3)})`);
+            return { nombre: primerNegocio.rubro, id: null, metodo: 'vectorial', similarity: primerNegocio.similarity };
           }
         }
       }
     } catch (semErr) {
-      console.warn('  ⚠️ Error en búsqueda semántica de rubros:', semErr);
+      console.warn('  ⚠️ Método C falló:', semErr.message);
     }
 
-    console.log('  ❌ No se detectó rubro');
+    console.log(`❌ PASO 2 FALLIDO: No se detectó rubro por ningún método`);
     return null;
   } catch (error) {
-    console.error('Error detectando rubro:', error);
+    console.error('Error en detectarRubroEstricto:', error);
     return null;
   }
 }
 
+// =====================================================================
+// PASO 3: RECUPERACIÓN DE CONTENIDO (Scopeado al Rubro)
+// =====================================================================
+
 /**
- * NIVEL 2: Busca productos dentro de un rubro específico
- * Estrategia:
- * 1. Búsqueda por texto (ilike) en títulos dentro del rubro
- * 2. Si hay pocos resultados, complementa con búsqueda semántica (filtrada por rubro)
+ * Obtiene negocios que pertenecen a un rubro específico
+ * @param {string} rubro Nombre del rubro
+ * @returns {Array} Array de negocios
  */
-export async function buscarProductosPorRubro(term, rubro) {
+export async function obtenerNegociosPorRubro(rubro) {
   try {
-    const termClean = String(term || '').trim();
-    
-    if (!rubro || !rubro.nombre) {
-      console.warn('❌ Rubro inválido para buscar productos');
+    if (!rubro || typeof rubro !== 'string') {
+      console.warn('❌ Rubro inválido para obtenerNegociosPorRubro');
       return [];
     }
 
-    console.log(`🔍 Nivel 2: Buscando productos para "${term}" en rubro "${rubro.nombre}"`);
+    console.log(`\n🏪 Obteniendo negocios del rubro "${rubro}"...`);
 
-    // 2.A: Búsqueda por texto (ilike) en negocios de este rubro
-    console.log('  → Búsqueda literal (ilike) en productos del rubro...');
+    const { data, error } = await supabase
+      .from('negocios')
+      .select('*')
+      .eq('rubro', rubro);
+
+    if (error) throw error;
+
+    const result = data || [];
+    console.log(`  ✅ Negocios encontrados: ${result.length}`);
+    return result;
+  } catch (error) {
+    console.error('Error en obtenerNegociosPorRubro:', error);
+    return [];
+  }
+}
+
+/**
+ * Obtiene productos dentro de un rubro específico
+ * ESTRATEGIA: Primero ilike, luego vectorial (filtrado estrictamente por rubro)
+ * @param {string} term Término de búsqueda
+ * @param {string} rubro Nombre del rubro
+ * @returns {Array} Array de productos
+ */
+export async function obtenerProductosPorRubro(term, rubro) {
+  try {
+    const termClean = String(term || '').trim();
+    
+    if (!rubro || typeof rubro !== 'string') {
+      console.warn('❌ Rubro inválido para obtenerProductosPorRubro');
+      return [];
+    }
+
+    console.log(`\n📦 PASO 3: Buscando productos para "${term}" en rubro "${rubro}"...`);
+
+    // SUB-PASO A: ilike por nombre dentro del rubro
+    console.log('  → Sub-paso A: Búsqueda ilike en productos del rubro...');
     let filters = [`titulo.ilike.%${termClean}%`];
 
     // Soporte para plurales
@@ -97,30 +172,35 @@ export async function buscarProductosPorRubro(term, rubro) {
       .from('productos')
       .select('*, negocios!inner(id, nombre, rubro, google_place_id)')
       .or(filters.join(','))
-      .eq('negocios.rubro', rubro.nombre);
+      .eq('negocios.rubro', rubro);
 
     if (errLiteral) throw errLiteral;
 
     const resultados = productosLiterales || [];
     console.log(`  ✅ Productos literales encontrados: ${resultados.length}`);
 
-    // 2.B: Si hay pocos resultados (< 3), complementar con búsqueda semántica
+    // SUB-PASO B: Si hay pocos, complementar con búsqueda vectorial (filtrada estrictamente)
     if (resultados.length < 3) {
-      console.log('  → Complementando con búsqueda semántica de productos...');
+      console.log('  → Sub-paso B: Complementando con búsqueda vectorial...');
       try {
         const semanticResp = await fetch(`/api/search-semantic-products?term=${encodeURIComponent(term)}`);
         
         if (semanticResp.ok) {
           const semanticData = await semanticResp.json();
-          const productosSematicos = semanticData.results || [];
+          const productosSemanticos = semanticData.results || [];
           
-          console.log(`  ✨ Productos semánticos encontrados: ${productosSematicos.length}`);
+          console.log(`  ✨ Productos semánticos encontrados: ${productosSemanticos.length}`);
           
-          // Filtrar semánticos por rubro y deduplicar
+          // RESTRICCIÓN ESTRICTA: Filtrar SOLO productos del rubro detectado
           const seenIds = new Set(resultados.map(p => p.id));
-          const semanticosFiltrados = productosSematicos.filter(p => {
-            const esDelRubro = p.negocios && p.negocios.rubro === rubro.nombre;
+          const semanticosFiltrados = productosSemanticos.filter(p => {
+            const esDelRubro = p.negocios && p.negocios.rubro === rubro;
             const noEsDuplicado = !seenIds.has(p.id);
+            
+            if (!esDelRubro) {
+              console.log(`    🚫 Descartado: "${p.titulo}" (rubro: ${p.negocios?.rubro}), esperado: "${rubro}"`);
+            }
+            
             return esDelRubro && noEsDuplicado;
           });
           
@@ -128,30 +208,30 @@ export async function buscarProductosPorRubro(term, rubro) {
           console.log(`  🔗 Después de fusión: ${resultados.length} productos totales`);
         }
       } catch (semErr) {
-        console.warn('  ⚠️ Error en búsqueda semántica de productos:', semErr);
+        console.warn('  ⚠️ Sub-paso B falló:', semErr.message);
       }
     }
 
     return resultados;
   } catch (error) {
-    console.error('Error buscando productos por rubro:', error);
+    console.error('Error en obtenerProductosPorRubro:', error);
     return [];
   }
 }
 
 /**
- * NIVEL 2 (Alternativo): Obtén TODOS los productos de un rubro para la sección "Exploración"
+ * Obtiene TODOS los productos de un rubro (para exploración)
  */
 export async function obtenerTodosProductosDelRubro(rubro) {
   try {
-    if (!rubro || !rubro.nombre) return [];
+    if (!rubro || typeof rubro !== 'string') return [];
 
-    console.log(`📦 Obteniend todos los productos del rubro "${rubro.nombre}"...`);
+    console.log(`📦 Obteniendo todos los productos del rubro "${rubro}"...`);
 
     const { data, error } = await supabase
       .from('productos')
       .select('*, negocios(id, nombre, rubro, google_place_id)')
-      .eq('negocios.rubro', rubro.nombre)
+      .eq('negocios.rubro', rubro)
       .limit(20);
 
     if (error) throw error;
@@ -162,16 +242,17 @@ export async function obtenerTodosProductosDelRubro(rubro) {
   }
 }
 
+// =====================================================================
+// FUNCIONES LEGADAS (Compatibilidad)
+// =====================================================================
+
 /**
  * Busca productos por título (búsqueda de texto pura y rápida)
  * NOTA: Esta función SOLO hace búsqueda literal. No usa IA.
  */
 export async function searchProductos(term) {
   try {
-    // Sanitizar: eliminar puntos que teclados móviles insertan automáticamente
     const original = String(term || '').trim().replace(/[.]/g, '');
-
-    // Búsqueda por texto (ilike + plurales)
     let query = supabase
       .from('productos')
       .select('*, negocios(id, rubro, nombre, google_place_id)');
@@ -189,7 +270,6 @@ export async function searchProductos(term) {
     const { data: textResults, error } = await query;
     
     if (error) throw error;
-
     return textResults || [];
   } catch (error) {
     console.error('Error buscando productos:', error);
@@ -199,7 +279,6 @@ export async function searchProductos(term) {
 
 /**
  * Busca productos usando semántica (IA con embeddings)
- * NOTA: Esta función SOLO se llama cuando la búsqueda literal falla
  */
 export async function searchProductosSemantic(term) {
   try {
@@ -227,7 +306,6 @@ export async function searchPalabrasClave(term) {
 
     if (error) throw error;
 
-    // Extraer todos los rubros asociados desde el RPC (si los devuelve)
     let rubros = [];
     if (data && data.length > 0) {
       rubros = data
@@ -236,8 +314,6 @@ export async function searchPalabrasClave(term) {
         .map(r => String(r).trim());
     }
 
-    // Fallback adicional: buscar en productos que contengan el término y extraer los rubros de los negocios asociados.
-    // Esto ayuda en casos como "papas" donde varios rubros pueden vender el mismo producto.
     try {
       const { data: prodData, error: prodErr } = await supabase
         .from('productos')
@@ -257,7 +333,6 @@ export async function searchPalabrasClave(term) {
       console.warn('Fallback productos -> rubros falló:', innerErr);
     }
 
-    // Normalizar y devolver lista única de rubros
     const uniqueRubros = Array.from(new Set(rubros.map(r => r.toLowerCase()))).map(r => r);
     return uniqueRubros;
   } catch (error) {
@@ -271,14 +346,11 @@ export async function searchPalabrasClave(term) {
  */
 export async function searchNegociosByRubro(rubro) {
   try {
-    // Acepta un string (búsqueda fuzzy) o un array de rubros (match exacto usando IN)
     let query = supabase.from('negocios').select('*');
 
     if (Array.isArray(rubro) && rubro.length > 0) {
-      // Usar IN para múltiples rubros (coincidencia exacta por string)
       query = query.in('rubro', rubro);
     } else if (typeof rubro === 'string' && rubro.trim() !== '') {
-      // Búsqueda fuzzy para coincidencia parcial
       query = query.ilike('rubro', `%${rubro}%`);
     } else {
       return [];
